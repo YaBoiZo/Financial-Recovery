@@ -57,7 +57,9 @@
       "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npx vite build --mode development 2>&1 | grep -E \"error|Error|built in|✓\")",
       "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npx vite build --mode development 2>&1 | grep -E \"error|Error|✓ built\")",
       "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npm run build 2>&1 | tail -6)",
-      "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npm install @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities jspdf jspdf-autotable 2>&1 | tail -8)"
+      "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npm install @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities jspdf jspdf-autotable 2>&1 | tail -8)",
+      "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npx vite build 2>&1 | tail -30)",
+      "Bash(cd \"/Users/yaboizo/Desktop/Projects/Financial Recovery\" && npx vite build 2>&1 | tail -20)"
     ]
   }
 }

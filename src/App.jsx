@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, useSortable, horizontalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import Papa from 'papaparse';
 import {
     PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -75,6 +78,30 @@ const CATEGORY_KEYWORDS = {
 
 const CHART_COLORS = ['#0ecb81', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444', '#06b6d4', '#f97316', '#14b8a6', '#e11d48', '#64748b', '#94a3b8'];
 
+const SUBSCRIPTION_CATALOG = [
+    { match: 'netflix',         name: 'Netflix',            cat: 'Streaming',       tip: 'Switch to Standard with Ads to save ~$8/mo, or share with 1 other household.' },
+    { match: 'spotify',         name: 'Spotify',            cat: 'Music',           tip: 'Family plan splits cost across 6 users. Duo plan saves ~$4/mo for two people.' },
+    { match: 'apple.com/bill',  name: 'Apple Services',     cat: 'Apple',           tip: 'Apple One bundle is cheaper than individual subs. Audit what you actually use.' },
+    { match: 'apple',           name: 'Apple Services',     cat: 'Apple',           tip: 'Apple One bundle is cheaper than individual subs. Audit what you actually use.' },
+    { match: 'disney',          name: 'Disney+',            cat: 'Streaming',       tip: 'Disney/Hulu/ESPN bundle may be better value. Rotate months off when not watching.' },
+    { match: 'youtube',         name: 'YouTube Premium',    cat: 'Streaming',       tip: 'Ad-supported is free. Only worth it if you watch 5+ hours a week without ads.' },
+    { match: 'hbo',             name: 'HBO Max',            cat: 'Streaming',       tip: 'Rotate with other services — subscribe for 1–2 months, cancel, rotate back.' },
+    { match: 'amazon prime',    name: 'Amazon Prime',       cat: 'Shopping/Stream', tip: 'Pause Prime during months you order less than 3 times. Shipping cost vs fee.' },
+    { match: 'adobe',           name: 'Adobe CC',           cat: 'Creative',        tip: 'Single-app plan is ~$35/mo vs full suite. Switch if you only use one Adobe app.' },
+    { match: 'rogers',          name: 'Rogers',             cat: 'Telecom',         tip: 'Bundle internet + mobile for a discount. Compare Freedom or Public Mobile rates.' },
+    { match: 'patreon',         name: 'Patreon',            cat: 'Creator Support', tip: 'Review each creator — are you watching their content? Cancel inactive pledges.' },
+    { match: 'microsoft',       name: 'Microsoft 365',      cat: 'Productivity',    tip: 'Family plan ($100/yr) covers 6 users. Split with family to pay ~$17/yr each.' },
+    { match: 'dropbox',         name: 'Dropbox',            cat: 'Cloud Storage',   tip: 'iCloud 200GB ($3.99/mo) or Google One may be cheaper for most use cases.' },
+    { match: 'hulu',            name: 'Hulu',               cat: 'Streaming',       tip: 'Ad-supported tier saves $7/mo. Bundle with Disney+ for combined savings.' },
+    { match: 'linkedin',        name: 'LinkedIn Premium',   cat: 'Professional',    tip: 'Free tier works for most users. Premium is mainly useful during active job search.' },
+    { match: 'duolingo',        name: 'Duolingo Plus',      cat: 'Education',       tip: 'Free tier covers all lessons. Super only removes ads — worth it if you\'re consistent.' },
+    { match: 'paramount',       name: 'Paramount+',         cat: 'Streaming',       tip: 'One of the cheaper streaming options. Rotate off after watching key shows.' },
+    { match: 'crave',           name: 'Crave',              cat: 'Streaming',       tip: 'Starz add-on is optional. Base plan covers most content at lower cost.' },
+    { match: 'gym',             name: 'Gym Membership',     cat: 'Fitness',         tip: 'Are you going at least 3x per week? If not, cost per visit is high. Consider pause.' },
+    { match: 'peloton',         name: 'Peloton App',        cat: 'Fitness',         tip: 'App subscription adds cost if you already own a bike. Compare vs YouTube workouts.' },
+];
+
+
 const ACCOUNT_TYPES = {
     chequing:   { label: 'Chequing',        badge: 'bg-blue-500/20 text-blue-400 border-blue-500/30',       color: '#3b82f6' },
     savings:    { label: 'Savings',         badge: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30', color: '#0ecb81' },
@@ -133,9 +160,10 @@ const fmt = (n) => {
 
 // ── localStorage helpers ──
 const LS_KEY = 'finrecovery_v3';
-function saveToLS(data) { try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) { } }
-function loadFromLS() { try { const d = localStorage.getItem(LS_KEY); return d ? JSON.parse(d) : null; } catch (e) { return null; } }
-function clearLS() { try { localStorage.removeItem(LS_KEY); } catch (e) { } }
+function userLsKey(user) { return user ? `finrecovery_v3__${user}` : LS_KEY; }
+function saveToLS(data, key) { try { localStorage.setItem(key || LS_KEY, JSON.stringify(data)); } catch (e) { } }
+function loadFromLS(key) { try { const d = localStorage.getItem(key || LS_KEY); return d ? JSON.parse(d) : null; } catch (e) { return null; } }
+function clearLS(key) { try { localStorage.removeItem(key || LS_KEY); } catch (e) { } }
 
 const PROFILES_KEY = 'finrecovery_profiles';
 function loadProfiles() { try { const d = localStorage.getItem(PROFILES_KEY); return d ? JSON.parse(d) : {}; } catch(e) { return {}; } }
@@ -927,11 +955,100 @@ ${wins.length > 0 ? `**What's going well:** ${wins.map(w => w.text).join('; ')}\
 }
 
 /* ═══════════════════════════════════════════
+   SORTABLE TILE — drag-and-drop wrapper
+   ═══════════════════════════════════════════ */
+function SortableTile({ id, children }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        cursor: 'grab',
+        zIndex: isDragging ? 10 : 'auto',
+    };
+    return <div ref={setNodeRef} style={style} {...attributes} {...listeners}>{children}</div>;
+}
+
+/* ═══════════════════════════════════════════
+   LOGIN SCREEN
+   ═══════════════════════════════════════════ */
+const USERS_LIST_KEY = 'finrecovery_users';
+function loadUsersList() { try { const d = localStorage.getItem(USERS_LIST_KEY); return d ? JSON.parse(d) : []; } catch(e) { return []; } }
+function saveUsersList(list) { try { localStorage.setItem(USERS_LIST_KEY, JSON.stringify(list)); } catch(e) {} }
+
+function LoginScreen({ onSelect }) {
+    const [users, setUsers] = useState(() => loadUsersList());
+    const [newName, setNewName] = useState('');
+    const [error, setError] = useState('');
+
+    const handleCreate = () => {
+        const name = newName.trim();
+        if (!name) return;
+        if (users.includes(name)) { setError('Profile name already exists'); return; }
+        const updated = [...users, name];
+        saveUsersList(updated);
+        setUsers(updated);
+        setNewName('');
+        setError('');
+        onSelect(name);
+    };
+
+    return (
+        <div className="login-screen">
+            <GalaxyBackground />
+            <div className="login-card">
+                <div className="login-logo">💰</div>
+                <h1 style={{ color: '#38BFFF', fontSize: '1.8rem', fontWeight: 700, margin: 0 }}>Financial Recovery</h1>
+                <p style={{ color: '#94a3b8', fontSize: '0.875rem', margin: 0 }}>Select your profile or create a new one</p>
+                {users.length > 0 && (
+                    <div className="login-profiles">
+                        {users.map(u => (
+                            <button key={u} className="login-profile-btn" onClick={() => onSelect(u)}>
+                                <div className="login-avatar">{u[0].toUpperCase()}</div>
+                                <span>{u}</span>
+                                <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748b' }}>→</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                <div className="login-create">
+                    <input
+                        value={newName}
+                        onChange={e => { setNewName(e.target.value); setError(''); }}
+                        onKeyDown={e => e.key === 'Enter' && handleCreate()}
+                        placeholder="New profile name..."
+                        className="login-input"
+                    />
+                    <button className="login-create-btn" onClick={handleCreate}>
+                        Create
+                    </button>
+                </div>
+                {error && <p style={{ color: '#FB7185', fontSize: 12 }}>{error}</p>}
+                <p style={{ color: '#334155', fontSize: 11, textAlign: 'center', marginTop: 8 }}>Each profile has isolated data — perfect for couples or family members</p>
+            </div>
+        </div>
+    );
+}
+
+/* ═══════════════════════════════════════════
    MAIN APP
    ═══════════════════════════════════════════ */
 export default function App() {
+    // ── Multi-user: active profile ──
+    const [activeUser, setActiveUser] = useState(() => localStorage.getItem('finrecovery_activeUser') || null);
+
+    const handleSelectUser = (name) => {
+        localStorage.setItem('finrecovery_activeUser', name);
+        setActiveUser(name);
+    };
+    const handleSwitchUser = () => {
+        localStorage.removeItem('finrecovery_activeUser');
+        setActiveUser(null);
+    };
+
     // ── Load persisted state ──
-    const saved = useRef(loadFromLS());
+    const currentLsKey = userLsKey(activeUser);
+    const saved = useRef(loadFromLS(currentLsKey));
     const [activeTab, setActiveTab] = useState('dashboard');
     const [transactions, setTransactions] = useState(() => saved.current?.transactions || []);
     const [accounts, setAccounts] = useState(() => saved.current?.accounts || []);
@@ -974,6 +1091,17 @@ export default function App() {
     const [merchantOverrides, setMerchantOverrides] = useState(() => saved.current?.merchantOverrides || {});
     // Dashboard period filter: 'all' | 'last3' | 'last6' | 'YYYY-MM'
     const [dashboardPeriod, setDashboardPeriod] = useState('all');
+    // Smooth chart hover overlay
+    const [chartHoverData, setChartHoverData] = useState(null);
+    // Dashboard tile order (drag-and-drop)
+    const [tileOrder, setTileOrder] = useState(() => {
+        try { const s = localStorage.getItem(`${currentLsKey}_tileOrder`); return s ? JSON.parse(s) : ['networth','net','income','spending','debt']; } catch(e) { return ['networth','net','income','spending','debt']; }
+    });
+    // Pie period filter & drilldown
+    const [piePeriod, setPiePeriod] = useState('all');
+    const [drillCategory, setDrillCategory] = useState(null);
+    // DnD sensors for tile reordering
+    const tileSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
     // Cash flow calendar display month
     const [calendarMonth, setCalendarMonth] = useState(() => {
         const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
@@ -1009,8 +1137,13 @@ export default function App() {
 
     // ── Persist to localStorage on change ──
     useEffect(() => {
-        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems] });
-    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems]);
+        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems] }, currentLsKey);
+    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems, currentLsKey]);
+
+    // Persist tile order
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_tileOrder`, JSON.stringify(tileOrder)); } catch(e) {}
+    }, [tileOrder, currentLsKey]);
 
     // ── Re-categorize stored transactions when keyword rules change ──
     // Runs once on mount. Respects manual merchantOverrides.
@@ -1793,11 +1926,16 @@ export default function App() {
 
     // Subscription audit
     const subscriptionAudit = useMemo(() => {
-        return recurringPayments.filter(rp =>
-            rp.category === 'Subscriptions' ||
-            rp.category === 'Entertainment' ||
-            ['netflix', 'spotify', 'disney', 'apple', 'youtube', 'hbo', 'adobe', 'amazon prime', 'rogers', 'patreon'].some(k => rp.merchant.toLowerCase().includes(k))
-        );
+        return recurringPayments
+            .filter(rp =>
+                rp.category === 'Subscriptions' ||
+                rp.category === 'Entertainment' ||
+                ['netflix','spotify','disney','apple','youtube','hbo','adobe','amazon prime','rogers','patreon','microsoft','hulu','linkedin','dropbox','paramount','crave','peloton'].some(k => rp.merchant.toLowerCase().includes(k))
+            )
+            .map(rp => {
+                const entry = SUBSCRIPTION_CATALOG.find(c => rp.merchant.toLowerCase().includes(c.match));
+                return { ...rp, canonicalName: entry?.name || rp.merchant, cat: entry?.cat || 'Subscription', tip: entry?.tip || 'Review if still actively used — cancel if not used in the last 30 days.' };
+            });
     }, [recurringPayments]);
     const filteredTx = useMemo(() => {
         let list = transactions;
@@ -2410,7 +2548,7 @@ ${financialContext}`;
         setShowConfirm({
             message: 'Clear ALL data? This cannot be undone.', onConfirm: () => {
                 setTransactions([]); setAccounts([]); setDebts([]); setStartingBalance(0); setChatMessages([]);
-                setAdvisorReportGenerated(false); setIsDemoMode(false); clearLS(); setShowConfirm(null);
+                setAdvisorReportGenerated(false); setIsDemoMode(false); clearLS(currentLsKey); setShowConfirm(null);
             }
         });
     }, []);
@@ -2508,41 +2646,58 @@ ${financialContext}`;
                         </div>
                     </div>
 
-                    {/* ── 2. STAT CARDS ── */}
-                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                        {[
-                            { label: 'Net Worth',        value: netWorth.net,            icon: PiggyBank,    sub: netWorth.assets > 0 ? `${fmt(netWorth.assets)} assets` : 'Set account balances', themeColor: '#A78BFA', glowColor: 'rgba(167,139,250,0.35)', numClass: 'num-neutral', span2: true },
-                            { label: 'Net Cash Flow',    value: summary.monthlyNet,      icon: Wallet,       sub: summary.monthlyNet >= 0 ? 'monthly surplus' : 'monthly deficit', themeColor: '#38BFFF', glowColor: 'rgba(56,191,255,0.35)', numClass: 'num-neutral', deltaKey: 'net', deltaGoodDir: 1 },
-                            { label: 'Monthly Income',   value: summary.monthlyIncome,   icon: TrendingUp,   sub: `${fmt(summary.income)} total`, themeColor: '#10F0A0', glowColor: 'rgba(16,240,160,0.4)', numClass: 'num-income', deltaKey: 'income', deltaGoodDir: 1 },
-                            { label: 'Monthly Spending', value: summary.monthlySpending, icon: TrendingDown, sub: `${fmt(summary.spending)} total`, themeColor: '#FF5C7A', glowColor: 'rgba(255,92,122,0.4)', numClass: 'num-expense', negative: true, deltaKey: 'spending', deltaGoodDir: -1 },
-                            { label: 'Total Debt',       value: totalDebtBalance,        icon: CreditCard,   sub: `${debts.length} active debt${debts.length !== 1 ? 's' : ''}`, themeColor: '#FBBF24', glowColor: 'rgba(251,191,36,0.35)', numClass: '', negative: true },
-                        ].map((card, i) => {
-                            const d = card.deltaKey && statDeltas ? statDeltas[card.deltaKey] : null;
-                            const isGood = d ? (d.delta * (card.deltaGoodDir || 1)) > 0 : null;
-                            return (
-                            <div key={i} className={`glass-card stat-card p-5 card-lift animate-slide-up stagger-${i+1} ${card.span2 ? 'col-span-2 lg:col-span-1' : ''}`}
-                                style={{ borderTop: `1px solid ${card.themeColor}45`, boxShadow: `0 12px 40px rgba(0,0,0,0.6), 0 0 40px ${card.glowColor.replace('0.', '0.0')}, 0 1px 0 rgba(255,255,255,0.04) inset` }}>
-                                <div className="flex items-start justify-between mb-5">
-                                    <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: `${card.themeColor}80` }}>{card.label}</span>
-                                    <div className="flex items-center gap-1.5">
-                                        {d && Math.abs(d.pct) > 0.5 && (
-                                            <span style={{ fontSize: 9, fontFamily: 'DM Mono, monospace', padding: '2px 6px', borderRadius: 4, fontWeight: 700, color: isGood ? '#10F0A0' : '#FF5C7A', background: isGood ? 'rgba(16,240,160,0.1)' : 'rgba(255,92,122,0.1)', border: `1px solid ${isGood ? 'rgba(16,240,160,0.25)' : 'rgba(255,92,122,0.25)'}` }}>
-                                                {d.delta > 0 ? '▲' : '▼'} {Math.abs(d.pct).toFixed(0)}%
-                                            </span>
-                                        )}
-                                        <div style={{ width: 30, height: 30, borderRadius: 8, background: `${card.themeColor}14`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${card.themeColor}25`, boxShadow: `0 0 14px ${card.glowColor}` }}>
-                                            <card.icon size={13} style={{ color: card.themeColor }} strokeWidth={2.2} />
-                                        </div>
+                    {/* ── 2. STAT CARDS — drag-to-reorder ── */}
+                    {(() => {
+                        const tileMap = {
+                            networth: { label: 'Net Worth',        value: netWorth.net,            icon: PiggyBank,    sub: netWorth.assets > 0 ? `${fmt(netWorth.assets)} assets` : 'Set account balances', themeColor: '#A78BFA', glowColor: 'rgba(167,139,250,0.35)', numClass: 'num-neutral' },
+                            net:      { label: 'Net Cash Flow',    value: summary.monthlyNet,      icon: Wallet,       sub: summary.monthlyNet >= 0 ? 'monthly surplus' : 'monthly deficit', themeColor: '#38BFFF', glowColor: 'rgba(56,191,255,0.35)', numClass: 'num-neutral', deltaKey: 'net', deltaGoodDir: 1 },
+                            income:   { label: 'Monthly Income',   value: summary.monthlyIncome,   icon: TrendingUp,   sub: `${fmt(summary.income)} total`, themeColor: '#10F0A0', glowColor: 'rgba(16,240,160,0.4)', numClass: 'num-income', deltaKey: 'income', deltaGoodDir: 1 },
+                            spending: { label: 'Monthly Spending', value: summary.monthlySpending, icon: TrendingDown, sub: `${fmt(summary.spending)} total`, themeColor: '#FF5C7A', glowColor: 'rgba(255,92,122,0.4)', numClass: 'num-expense', negative: true, deltaKey: 'spending', deltaGoodDir: -1 },
+                            debt:     { label: 'Total Debt',       value: totalDebtBalance,        icon: CreditCard,   sub: `${debts.length} active debt${debts.length !== 1 ? 's' : ''}`, themeColor: '#FBBF24', glowColor: 'rgba(251,191,36,0.35)', numClass: '', negative: true },
+                        };
+                        const orderedKeys = tileOrder.filter(k => tileMap[k]);
+                        return (
+                            <DndContext sensors={tileSensors} collisionDetection={closestCenter} onDragEnd={({ active, over }) => {
+                                if (over && active.id !== over.id) {
+                                    setTileOrder(prev => { const o = prev.filter(k => tileMap[k]); return arrayMove(o, o.indexOf(active.id), o.indexOf(over.id)); });
+                                }
+                            }}>
+                                <SortableContext items={orderedKeys} strategy={horizontalListSortingStrategy}>
+                                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                        {orderedKeys.map((key, i) => {
+                                            const card = tileMap[key];
+                                            const d = card.deltaKey && statDeltas ? statDeltas[card.deltaKey] : null;
+                                            const isGood = d ? (d.delta * (card.deltaGoodDir || 1)) > 0 : null;
+                                            return (
+                                                <SortableTile key={key} id={key}>
+                                                    <div className={`glass-card stat-card p-5 card-lift animate-slide-up stagger-${i+1}`}
+                                                        style={{ borderTop: `1px solid ${card.themeColor}45`, boxShadow: `0 12px 40px rgba(0,0,0,0.6), 0 0 40px ${card.glowColor.replace('0.', '0.0')}, 0 1px 0 rgba(255,255,255,0.04) inset`, height: '100%' }}>
+                                                        <div className="flex items-start justify-between mb-5">
+                                                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: `${card.themeColor}80` }}>{card.label}</span>
+                                                            <div className="flex items-center gap-1.5">
+                                                                {d && Math.abs(d.pct) > 0.5 && (
+                                                                    <span style={{ fontSize: 9, fontFamily: 'DM Mono, monospace', padding: '2px 6px', borderRadius: 4, fontWeight: 700, color: isGood ? '#10F0A0' : '#FF5C7A', background: isGood ? 'rgba(16,240,160,0.1)' : 'rgba(255,92,122,0.1)', border: `1px solid ${isGood ? 'rgba(16,240,160,0.25)' : 'rgba(255,92,122,0.25)'}` }}>
+                                                                        {d.delta > 0 ? '▲' : '▼'} {Math.abs(d.pct).toFixed(0)}%
+                                                                    </span>
+                                                                )}
+                                                                <div style={{ width: 30, height: 30, borderRadius: 8, background: `${card.themeColor}14`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${card.themeColor}25`, boxShadow: `0 0 14px ${card.glowColor}` }}>
+                                                                    <card.icon size={13} style={{ color: card.themeColor }} strokeWidth={2.2} />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <p className={`stat-value text-[2rem] ${card.numClass}`} style={{ color: card.numClass ? undefined : card.themeColor, textShadow: `0 0 30px ${card.glowColor}` }}>
+                                                            {card.negative ? '-' : ''}{fmt(Math.abs(card.value))}
+                                                        </p>
+                                                        <p style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 10, fontWeight: 500, letterSpacing: '0.02em' }}>{card.sub}</p>
+                                                    </div>
+                                                </SortableTile>
+                                            );
+                                        })}
                                     </div>
-                                </div>
-                                <p className={`stat-value text-[2rem] ${card.numClass}`} style={{ color: card.numClass ? undefined : card.themeColor, textShadow: `0 0 30px ${card.glowColor}` }}>
-                                    {card.negative ? '-' : ''}{fmt(Math.abs(card.value))}
-                                </p>
-                                <p style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 10, fontWeight: 500, letterSpacing: '0.02em' }}>{card.sub}</p>
-                            </div>
-                            );
-                        })}
-                    </div>
+                                </SortableContext>
+                            </DndContext>
+                        );
+                    })()}
 
                     {/* ── 3. ALERTS ── compact pill chips */}
                     {(anomalies.length > 0 || upcomingBills.length > 0 || runway) && (
@@ -2713,7 +2868,25 @@ ${financialContext}`;
 
                     {/* ── 4. INCOME vs EXPENSES — Gradient Area Chart ── */}
                     {incomeExpenseTrend.length > 1 && (
-                        <div className="chart-container p-6">
+                        <div className="chart-container p-6" style={{ position: 'relative' }}>
+                            {/* Smooth hover overlay */}
+                            <div style={{
+                                position: 'absolute', top: 16, right: 16, zIndex: 10,
+                                opacity: chartHoverData ? 1 : 0,
+                                transition: 'opacity 0.15s ease',
+                                pointerEvents: 'none',
+                                background: 'rgba(3,8,16,0.92)', border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 12, padding: '10px 14px',
+                                backdropFilter: 'blur(12px)',
+                                minWidth: 160,
+                            }}>
+                                {chartHoverData && (<>
+                                    <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 600 }}>{chartHoverData.label}</p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 2 }}>↑ {fmt(chartHoverData.income)}</p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 2 }}>↓ {fmt(chartHoverData.expenses)}</p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#A78BFA' }}>≈ {fmt(chartHoverData.net)}</p>
+                                </>)}
+                            </div>
                             {/* Floating particles */}
                             {[...Array(6)].map((_, i) => (
                                 <div key={i} className="chart-particle" style={{
@@ -2749,7 +2922,15 @@ ${financialContext}`;
                                 </div>
                             </div>
                             <ResponsiveContainer width="100%" height={240}>
-                                <AreaChart data={incomeExpenseTrend} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                                <AreaChart data={incomeExpenseTrend} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
+                                    onMouseMove={(e) => {
+                                        if (e?.activePayload?.length) {
+                                            const d = e.activePayload[0].payload;
+                                            setChartHoverData({ label: d.label, income: d.income, expenses: d.expenses, net: d.net });
+                                        }
+                                    }}
+                                    onMouseLeave={() => setChartHoverData(null)}
+                                >
                                     <defs>
                                         <linearGradient id="incomeGrad" x1="0" y1="0" x2="1" y2="0">
                                             <stop offset="0%" stopColor="#10F0A0" />
@@ -2781,7 +2962,6 @@ ${financialContext}`;
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
                                     <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
                                     <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={48} axisLine={false} tickLine={false} />
-                                    <Tooltip content={customTooltip} />
                                     <Area
                                         type="monotone" dataKey="income" name="Income"
                                         stroke="url(#incomeGrad)" strokeWidth={2.5}
@@ -2819,70 +2999,163 @@ ${financialContext}`;
                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
                         {/* Spending pie + category list */}
                         <div className="glass-card p-6 lg:col-span-3">
-                            <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                                 <h3 className="text-base font-semibold text-white">Spending by Category</h3>
-                                {selectedCategory && (
-                                    <button onClick={() => setSelectedCategory(null)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 border border-white/10 px-2 py-1 rounded-lg transition-all">
-                                        <X size={11} /> {selectedCategory}
-                                    </button>
-                                )}
-                            </div>
-                            {categoryData.length > 0 ? (
-                                <>
-                                <div className="flex gap-4">
-                                    <div className="shrink-0">
-                                        <ResponsiveContainer width={160} height={160}>
-                                            <PieChart>
-                                                <Pie data={categoryData} cx="50%" cy="50%" innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value"
-                                                    onClick={(data) => setSelectedCategory(prev => prev === data.name ? null : data.name)}
-                                                    style={{ cursor: 'pointer' }}>
-                                                    {categoryData.map((c, i) => <Cell key={i} fill={c.color} opacity={!selectedCategory || selectedCategory === c.name ? 1 : 0.3} />)}
-                                                </Pie>
-                                                <Tooltip formatter={(v) => fmt(v)} />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                        <p className="text-[9px] text-slate-600 text-center mt-1">Click a slice to drill in</p>
-                                    </div>
-                                    <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[170px] pr-1">
-                                        {categoryData.map((c, i) => (
-                                            <div key={i} onClick={() => setSelectedCategory(prev => prev === c.name ? null : c.name)}
-                                                className={`flex items-center gap-2 text-xs cursor-pointer rounded-lg px-1 py-0.5 transition-all ${selectedCategory === c.name ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
-                                                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color }} />
-                                                <span className="text-slate-300 truncate flex-1">{c.name}</span>
-                                                {categoryTrends[c.name] === 'rising'  && <span className="text-rose-400 text-[10px]">▲</span>}
-                                                {categoryTrends[c.name] === 'falling' && <span className="text-emerald-400 text-[10px]">▼</span>}
-                                                <span className="font-mono text-slate-400 w-8 text-right">{c.pct.toFixed(0)}%</span>
-                                                <span className="font-mono text-white w-16 text-right">{fmt(c.monthly)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
+                                <div className="flex items-center gap-1.5">
+                                    {/* Pie period filter */}
+                                    {[{k:'all',l:'All'},{k:'3m',l:'3 Mo'},{k:'1m',l:'1 Mo'}].map(p => (
+                                        <button key={p.k} onClick={() => { setPiePeriod(p.k); setSelectedCategory(null); }}
+                                            className="text-[10px] px-2.5 py-1 rounded-lg font-semibold transition-all"
+                                            style={piePeriod === p.k ? { background: 'rgba(167,139,250,0.15)', color: '#A78BFA', border: '1px solid rgba(167,139,250,0.3)' } : { color: 'var(--text-faint)', border: '1px solid transparent' }}>
+                                            {p.l}
+                                        </button>
+                                    ))}
+                                    {selectedCategory && (
+                                        <button onClick={() => setSelectedCategory(null)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 border border-white/10 px-2 py-1 rounded-lg transition-all ml-1">
+                                            <X size={11} /> {selectedCategory}
+                                        </button>
+                                    )}
                                 </div>
-                                {/* Category drilldown transactions */}
-                                {selectedCategory && (() => {
-                                    const catTxs = dashboardTx
-                                        .filter(t => t.category === selectedCategory && t.amount < 0 && !transferTxIds.has(t.id))
-                                        .sort((a, b) => new Date(b.date) - new Date(a.date))
-                                        .slice(0, 20);
-                                    const catColor = CATEGORIES.find(c => c.name === selectedCategory)?.color || '#94a3b8';
-                                    return (
-                                        <div className="mt-4 pt-4 border-t border-white/[0.06] animate-fade-in">
-                                            <p className="text-xs font-medium mb-2" style={{ color: catColor }}>
-                                                {selectedCategory} — {catTxs.length} transactions · {fmt(catTxs.reduce((s,t) => s + Math.abs(t.amount), 0))} total
-                                            </p>
-                                            <div className="space-y-1 max-h-48 overflow-y-auto">
-                                                {catTxs.map((t, i) => (
-                                                    <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-white/[0.04] last:border-0">
-                                                        <span className="text-slate-500 w-20 shrink-0">{t.date}</span>
-                                                        <span className="text-slate-300 truncate flex-1 mx-2">{t.description.substring(0, 36)}</span>
-                                                        <span className="font-mono text-rose-400 shrink-0">{fmt(Math.abs(t.amount))}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
+                            </div>
+                            {(() => {
+                                // Compute pie data for selected period
+                                let pieTxSource = dashboardTx;
+                                if (piePeriod === '3m') {
+                                    const cutoff = availableMonths.slice(-3)[0] || '';
+                                    pieTxSource = transactions.filter(t => t.date.slice(0,7) >= cutoff);
+                                } else if (piePeriod === '1m') {
+                                    const cutoff = availableMonths.slice(-1)[0] || '';
+                                    pieTxSource = transactions.filter(t => t.date.slice(0,7) === cutoff);
+                                }
+                                const pMonths = piePeriod === '3m' ? 3 : piePeriod === '1m' ? 1 : dashboardRange.months;
+                                const pMap = {}, pCount = {};
+                                pieTxSource.filter(t => t.amount < 0 && !transferTxIds.has(t.id)).forEach(t => {
+                                    const cat = t.category || 'Other';
+                                    if (cat === 'Transfers') return;
+                                    pMap[cat] = (pMap[cat] || 0) + Math.abs(t.amount);
+                                    pCount[cat] = (pCount[cat] || 0) + 1;
+                                });
+                                const pTotal = Object.values(pMap).reduce((s,v) => s+v, 0);
+                                const pieData = Object.entries(pMap).map(([name,value]) => ({
+                                    name, value: Math.round(value*100)/100,
+                                    count: pCount[name]||0, pct: pTotal>0?(value/pTotal*100):0,
+                                    monthly: value/pMonths,
+                                    color: CATEGORIES.find(c=>c.name===name)?.color||'#94a3b8',
+                                })).sort((a,b)=>b.value-a.value);
+
+                                if (!pieData.length) return <p className="text-slate-500 text-sm">No spending data for this period</p>;
+                                return (
+                                    <>
+                                    <div className="flex gap-4">
+                                        <div className="shrink-0">
+                                            <ResponsiveContainer width={160} height={160}>
+                                                <PieChart>
+                                                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value"
+                                                        onClick={(data) => setSelectedCategory(prev => prev === data.name ? null : data.name)}
+                                                        style={{ cursor: 'pointer' }}>
+                                                        {pieData.map((c, i) => <Cell key={i} fill={c.color} opacity={!selectedCategory || selectedCategory === c.name ? 1 : 0.3} />)}
+                                                    </Pie>
+                                                    <Tooltip formatter={(v) => fmt(v)} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                            <p className="text-[9px] text-slate-600 text-center mt-1">Click a slice to drill in</p>
                                         </div>
-                                    );
-                                })()}
-                                </>
-                            ) : <p className="text-slate-500 text-sm">No spending data for this period</p>}
+                                        <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[170px] pr-1">
+                                            {pieData.map((c, i) => (
+                                                <div key={i} onClick={() => setSelectedCategory(prev => prev === c.name ? null : c.name)}
+                                                    className={`flex items-center gap-2 text-xs cursor-pointer rounded-lg px-1 py-0.5 transition-all ${selectedCategory === c.name ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
+                                                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color }} />
+                                                    <span className="text-slate-300 truncate flex-1">{c.name}</span>
+                                                    {categoryTrends[c.name] === 'rising'  && <span className="text-rose-400 text-[10px]">▲</span>}
+                                                    {categoryTrends[c.name] === 'falling' && <span className="text-emerald-400 text-[10px]">▼</span>}
+                                                    <span className="font-mono text-slate-400 w-8 text-right">{c.pct.toFixed(0)}%</span>
+                                                    <span className="font-mono text-white w-16 text-right">{fmt(c.monthly)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {/* Enhanced category drilldown */}
+                                    {selectedCategory && (() => {
+                                        const catTxs = pieTxSource
+                                            .filter(t => t.category === selectedCategory && t.amount < 0 && !transferTxIds.has(t.id))
+                                            .sort((a, b) => new Date(b.date) - new Date(a.date));
+                                        const catColor = CATEGORIES.find(c => c.name === selectedCategory)?.color || '#94a3b8';
+                                        const catTotal = catTxs.reduce((s,t) => s + Math.abs(t.amount), 0);
+                                        const catAvg = catTxs.length > 0 ? catTotal / catTxs.length : 0;
+                                        const catMax = catTxs.length > 0 ? Math.max(...catTxs.map(t => Math.abs(t.amount))) : 0;
+                                        // Merchant breakdown
+                                        const merchantMap = {};
+                                        catTxs.forEach(t => {
+                                            const key = t.description.substring(0, 24).trim();
+                                            if (!merchantMap[key]) merchantMap[key] = { total: 0, count: 0 };
+                                            merchantMap[key].total += Math.abs(t.amount);
+                                            merchantMap[key].count++;
+                                        });
+                                        const topMerchants = Object.entries(merchantMap).sort((a,b) => b[1].total - a[1].total).slice(0, 5);
+                                        const handleExportPdf = async () => {
+                                            try {
+                                                const { default: jsPDF } = await import('jspdf');
+                                                const { default: autoTable } = await import('jspdf-autotable');
+                                                const doc = new jsPDF();
+                                                doc.setFontSize(16);
+                                                doc.text(`${selectedCategory} — Transaction Report`, 14, 22);
+                                                doc.setFontSize(10);
+                                                doc.setTextColor(100);
+                                                doc.text(`Total: ${fmt(catTotal)} · ${catTxs.length} transactions · Avg: ${fmt(catAvg)}`, 14, 30);
+                                                const rows = catTxs.map(t => [t.date, t.description.substring(0,38), fmt(Math.abs(t.amount))]);
+                                                autoTable(doc, { head: [['Date','Description','Amount']], body: rows, startY: 36, styles: { fontSize: 9 }, headStyles: { fillColor: [14, 203, 129] } });
+                                                doc.save(`${selectedCategory.replace(/\s+/g,'-')}-transactions.pdf`);
+                                            } catch(e) { alert('PDF export failed. Make sure jspdf is installed.'); }
+                                        };
+                                        return (
+                                            <div className="mt-4 pt-4 border-t border-white/[0.06] animate-fade-in">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <p className="text-xs font-semibold" style={{ color: catColor }}>{selectedCategory}</p>
+                                                    <button onClick={handleExportPdf} className="text-[10px] px-2.5 py-1 rounded-lg font-medium flex items-center gap-1 transition-all"
+                                                        style={{ background: 'rgba(16,240,160,0.1)', color: '#10F0A0', border: '1px solid rgba(16,240,160,0.25)' }}>
+                                                        <FileText size={10} /> Export PDF
+                                                    </button>
+                                                </div>
+                                                {/* Stats row */}
+                                                <div className="grid grid-cols-3 gap-2 mb-3">
+                                                    {[{l:'Total',v:fmt(catTotal)},{l:'Transactions',v:catTxs.length},{l:'Avg / Tx',v:fmt(catAvg)}].map(s=>(
+                                                        <div key={s.l} className="text-center py-2 rounded-lg bg-white/[0.02]">
+                                                            <p className="text-[10px] text-slate-500 mb-0.5">{s.l}</p>
+                                                            <p className="text-xs font-mono font-semibold text-white">{s.v}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {/* Top merchants */}
+                                                {topMerchants.length > 0 && (
+                                                    <div className="mb-3">
+                                                        <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Top Merchants</p>
+                                                        <div className="space-y-1">
+                                                            {topMerchants.map(([name, data], i) => (
+                                                                <div key={i} className="flex items-center justify-between text-xs">
+                                                                    <span className="text-slate-400 truncate flex-1">{name}</span>
+                                                                    <span className="text-[10px] text-slate-500 mx-2">{data.count}x</span>
+                                                                    <span className="font-mono text-rose-400 shrink-0">{fmt(data.total)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {/* Transaction list */}
+                                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                                    {catTxs.slice(0, 20).map((t, i) => (
+                                                        <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-white/[0.04] last:border-0">
+                                                            <span className="text-slate-500 w-20 shrink-0">{t.date}</span>
+                                                            <span className="text-slate-300 truncate flex-1 mx-2">{t.description.substring(0, 32)}</span>
+                                                            <span className="font-mono text-rose-400 shrink-0">{fmt(Math.abs(t.amount))}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                    </>
+                                );
+                            })()}
                         </div>
 
                         {/* Health score + quick insights */}
@@ -5320,6 +5593,45 @@ ${financialContext}`;
                     </div>
                 )}
 
+                {/* Subscription Intelligence Panel */}
+                {subscriptionAudit.length > 0 && (
+                    <div className="glass-card p-5">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                <Tv size={14} className="text-violet-400" /> Subscription Intelligence
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/20 font-medium">AI Tips</span>
+                            </h3>
+                            <div className="text-right">
+                                <p className="text-xs font-mono text-rose-400">{fmt(subscriptionAudit.reduce((s, r) => s + r.avgAmount, 0))}/mo</p>
+                                <p className="text-[10px] text-slate-500">{fmt(subscriptionAudit.reduce((s, r) => s + r.avgAmount * 12, 0))}/yr</p>
+                            </div>
+                        </div>
+                        <div className="space-y-3">
+                            {subscriptionAudit.map((sub, i) => (
+                                <div key={i} className="rounded-xl p-3 bg-white/[0.025] border border-white/[0.05] hover:border-violet-500/20 transition-all">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                <p className="text-sm font-semibold text-white">{sub.canonicalName}</p>
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/20 font-medium uppercase tracking-wide shrink-0">{sub.cat}</span>
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/20 shrink-0">{sub.frequency}</span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-400 italic leading-relaxed">💡 {sub.tip}</p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="font-mono text-sm font-semibold text-rose-400">{fmt(sub.avgAmount)}/mo</p>
+                                            <p className="text-[10px] text-slate-500">{fmt(sub.avgAmount * 12)}/yr</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-slate-600 mt-3 text-center">
+                            Cancelling 2–3 unused subscriptions could save {fmt(subscriptionAudit.slice(0,3).reduce((s,r) => s + r.avgAmount, 0))}/mo · {fmt(subscriptionAudit.slice(0,3).reduce((s,r) => s + r.avgAmount * 12, 0))}/yr
+                        </p>
+                    </div>
+                )}
+
                 {/* Weekend vs Weekday spending */}
                 {(weekendMonthly > 0 || weekdayMonthly > 0) && (
                     <div className="glass-card p-5">
@@ -5470,6 +5782,10 @@ ${financialContext}`;
     /* ═══════════════════════════════════════
        MAIN LAYOUT
        ═══════════════════════════════════════ */
+    if (!activeUser) {
+        return <LoginScreen onSelect={handleSelectUser} />;
+    }
+
     return (
         <div className="app-shell">
             <GalaxyBackground />
@@ -5515,6 +5831,16 @@ ${financialContext}`;
                             </div>
                         </div>
                     )}
+                    {/* Active user badge */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, background: 'rgba(56,191,255,0.06)', border: '1px solid rgba(56,191,255,0.15)', marginBottom: 6 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #38BFFF, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: '#030810' }}>
+                            {activeUser[0].toUpperCase()}
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeUser}</span>
+                        <button onClick={handleSwitchUser} title="Switch User" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 0, display: 'flex', alignItems: 'center' }}>
+                            <ArrowUpRight size={13} style={{ transform: 'rotate(180deg)' }} />
+                        </button>
+                    </div>
                     <button onClick={() => setShowProfilesModal(true)} className="sidebar-action">
                         <User size={13} /><span>Sessions</span>
                     </button>

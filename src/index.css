@@ -1124,3 +1124,59 @@ input:focus, select:focus, textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   MULTI-USER LOGIN SCREEN
+   ═══════════════════════════════════════════════════════════════ */
+.login-screen {
+  position: fixed; inset: 0;
+  background: var(--bg-void);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.login-card {
+  background: rgba(5,12,24,0.88);
+  border: 1px solid rgba(56,191,255,0.25);
+  border-radius: 24px;
+  padding: 48px 40px;
+  min-width: 380px;
+  max-width: 440px;
+  width: 90vw;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+  backdrop-filter: blur(32px);
+  box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 60px rgba(56,191,255,0.06), 0 1px 0 rgba(255,255,255,0.05) inset;
+  position: relative; z-index: 10;
+}
+.login-logo { font-size: 3rem; filter: drop-shadow(0 0 20px rgba(56,191,255,0.5)); }
+.login-profiles { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.login-profile-btn {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(56,191,255,0.06); border: 1px solid rgba(56,191,255,0.18);
+  border-radius: 12px; padding: 12px 16px; color: #e2e8f0;
+  cursor: pointer; transition: all 0.2s; font-size: 0.95rem; font-weight: 500;
+  width: 100%;
+}
+.login-profile-btn:hover {
+  background: rgba(56,191,255,0.14); border-color: rgba(56,191,255,0.45);
+  box-shadow: 0 0 16px rgba(56,191,255,0.12);
+}
+.login-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, #38BFFF, #A78BFA);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #030810; font-size: 1rem; flex-shrink: 0;
+}
+.login-create { display: flex; gap: 8px; width: 100%; }
+.login-input {
+  flex: 1; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px; padding: 10px 14px; color: #e2e8f0; font-size: 0.9rem;
+  outline: none; transition: border-color 0.2s;
+}
+.login-input:focus { border-color: rgba(56,191,255,0.5); box-shadow: 0 0 0 3px rgba(56,191,255,0.08); }
+.login-create-btn {
+  background: linear-gradient(135deg, #38BFFF, #A78BFA);
+  border: none; border-radius: 10px; padding: 10px 18px;
+  color: #030810; font-weight: 700; cursor: pointer; font-size: 0.875rem;
+  white-space: nowrap; transition: opacity 0.2s, transform 0.15s;
+}
+.login-create-btn:hover { opacity: 0.88; transform: translateY(-1px); }

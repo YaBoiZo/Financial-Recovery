@@ -1918,15 +1918,21 @@ export default function App() {
     }, [monthlyData, netWorth.total]);
 
     const balanceTrend = useMemo(() => {
+        if (dashboardTx.length === 0) return [];
+        const periodDates = dashboardTx.map(t => t.date).sort();
+        const minDate = periodDates[0], maxDate = periodDates[periodDates.length - 1];
         let running = startingBalance;
-        const sorted = [...transactions]
+        return [...transactions]
             .filter(t => !isNaN(new Date(t.date)))
-            .sort((a, b) => new Date(a.date) - new Date(b.date));
-        return sorted.map(t => {
-            running += t.amount;
-            return { date: t.date, balance: Math.round(running * 100) / 100 };
-        });
-    }, [transactions, startingBalance]);
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .reduce((acc, t) => {
+                running += t.amount;
+                if (t.date >= minDate && t.date <= maxDate) {
+                    acc.push({ date: t.date, balance: Math.round(running * 100) / 100 });
+                }
+                return acc;
+            }, []);
+    }, [transactions, dashboardTx, startingBalance]);
 
     // v2: spending insights
     const insights = useMemo(() => {
@@ -2652,14 +2658,24 @@ export default function App() {
         return { data, best: Math.max(...nets), worst: Math.min(...nets), avg: Math.round(nets.reduce((s, v) => s + v, 0) / nets.length) };
     }, [transactions, transferTxIds]);
 
-    // ── INCOME VS EXPENSE TREND (monthly side-by-side) ──
+    // ── INCOME VS EXPENSE TREND (monthly, synced to dashboardTx period) ──
     const incomeExpenseTrend = useMemo(() => {
-        return monthlyData.map(m => ({
-            ...m,
-            label: m.month.slice(5) + '/' + m.month.slice(2, 4),
-            net: Math.round((m.income - m.expenses) * 100) / 100,
-        }));
-    }, [monthlyData]);
+        const map = {};
+        dashboardTx.filter(t => {
+            const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
+            return cat !== 'Transfers' && cat !== 'Debt Payments' && !transferTxIds.has(t.id);
+        }).forEach(t => {
+            const d = new Date(t.date);
+            if (isNaN(d)) return;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (!map[key]) map[key] = { month: key, income: 0, expenses: 0 };
+            if (t.amount > 0) map[key].income += t.amount;
+            else map[key].expenses += Math.abs(t.amount);
+        });
+        return Object.values(map)
+            .sort((a, b) => a.month.localeCompare(b.month))
+            .map(m => ({ ...m, label: m.month.slice(5) + '/' + m.month.slice(2, 4), net: Math.round((m.income - m.expenses) * 100) / 100 }));
+    }, [dashboardTx, transferTxIds, merchantOverrides]);
 
     // ── FINANCIAL PRIORITY STACK ──
     const priorityStack = useMemo(() => {
@@ -3353,92 +3369,12 @@ ${financialContext}`;
                         );
                     })()}
 
-                    {/* ── 2. SITUATION + HEALTH SCORE ── */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                        {/* Left: situation + alerts + wins */}
-                        <div className="lg:col-span-2 space-y-3">
-                            {situationSummary && survivabilityVerdict && (
-                                <div className={`glass-card p-4 border-l-[3px] animate-fade-in ${
-                                    survivabilityVerdict.color === 'rose' ? 'border-l-rose-500' :
-                                    survivabilityVerdict.color === 'amber' ? 'border-l-amber-500' :
-                                    'border-l-emerald-500'
-                                }`}>
-                                    <div className="flex items-start justify-between gap-3 mb-2">
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your Situation Right Now</span>
-                                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
-                                            survivabilityVerdict.color === 'rose' ? 'bg-rose-500/20 text-rose-400' :
-                                            survivabilityVerdict.color === 'amber' ? 'bg-amber-500/20 text-amber-400' :
-                                            'bg-emerald-500/20 text-emerald-400'
-                                        }`}>{survivabilityVerdict.label}</span>
-                                    </div>
-                                    <p className="text-sm text-slate-200 leading-relaxed mb-1">{situationSummary}</p>
-                                    <p className={`text-xs leading-relaxed ${
-                                        survivabilityVerdict.color === 'rose' ? 'text-rose-300/70' :
-                                        survivabilityVerdict.color === 'amber' ? 'text-amber-300/70' :
-                                        'text-emerald-300/70'
-                                    }`}>{survivabilityVerdict.message}</p>
-                                </div>
-                            )}
-                            {/* Alerts */}
-                            {(anomalies.length > 0 || upcomingBills.length > 0 || runway || suspiciousFlags.size > 0 || (nwTrend.length >= 2 && Math.abs(nwTrend[nwTrend.length-1].nw - nwTrend[0].nw) >= 100)) && (
-                                <div className="flex flex-wrap gap-2">
-                                    {runway && (
-                                        <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${runway.critical ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
-                                            <AlertTriangle size={11} className="shrink-0" />
-                                            {runway.months === 0 ? 'Cash runway critical — savings depleted' : `Deficit mode · savings last ~${runway.months}mo`}
-                                        </div>
-                                    )}
-                                    {suspiciousFlags.size > 0 && (() => {
-                                        const warnCount = [...suspiciousFlags.values()].filter(f => f.severity === 'warn').length;
-                                        if (warnCount === 0) return null;
-                                        return (
-                                            <button onClick={() => setActiveTab('finances')}
-                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 transition-all">
-                                                <AlertTriangle size={11} className="shrink-0" />
-                                                {warnCount} suspicious transaction{warnCount !== 1 ? 's' : ''} flagged
-                                            </button>
-                                        );
-                                    })()}
-                                    {anomalies.slice(0, 2).map((a, i) => (
-                                        <div key={i} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${a.type === 'high' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
-                                            {a.type === 'high' ? '⚠' : '✓'} {a.category} {a.type === 'high' ? `${((a.ratio - 1) * 100).toFixed(0)}% above` : `${((1 - a.ratio) * 100).toFixed(0)}% below`} normal
-                                        </div>
-                                    ))}
-                                    {upcomingBills.slice(0, 2).map((bill, i) => (
-                                        <div key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border bg-amber-500/8 border-amber-500/25 text-[11px] font-medium text-amber-300">
-                                            <Calendar size={11} className="shrink-0" />
-                                            {bill.merchant} <span className="font-mono text-amber-400 ml-1">{bill.nextDue.slice(5)}</span> · <span className="font-mono text-rose-400">{fmt(bill.avgAmount)}</span>
-                                        </div>
-                                    ))}
-                                    {nwTrend.length >= 2 && (() => {
-                                        const delta = nwTrend[nwTrend.length-1].nw - nwTrend[0].nw;
-                                        if (Math.abs(delta) < 100) return null;
-                                        return (
-                                            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${delta > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
-                                                {delta > 0 ? <TrendingUp size={11} className="shrink-0" /> : <TrendingDown size={11} className="shrink-0" />}
-                                                Net worth {delta > 0 ? 'up' : 'down'} {fmt(Math.abs(delta))} since {nwTrend[0].label}
-                                            </div>
-                                        );
-                                    })()}
-                                </div>
-                            )}
-                            {/* Wins */}
-                            {wins.length > 0 && (
-                                <div className="flex flex-wrap gap-2">
-                                    {wins.slice(0, 4).map((w, i) => (
-                                        <div key={i} className="win-card flex items-center gap-2 px-3 py-1.5 text-xs text-emerald-300">
-                                            <span className="text-sm leading-none">{w.icon}</span>
-                                            <span className="font-medium">{w.text}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        {/* Right: Health Score compact */}
-                        {healthScore && (
-                            <div className="glass-card p-4 health-score-card flex flex-col">
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Financial Health</p>
-                                <div className="flex items-center gap-4 mb-3">
+                    {/* ── 2. HEALTH SCORE + SAVINGS RATE ── */}
+                    {(healthScore || summary.monthlyIncome > 0) && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {/* Health Score */}
+                            {healthScore && (
+                                <div className="glass-card p-5 flex items-center gap-5">
                                     <div className="relative shrink-0" style={{ width: 88, height: 88 }}>
                                         <svg viewBox="0 0 88 88" width="88" height="88" style={{ transform: 'rotate(-90deg)' }}>
                                             <defs>
@@ -3464,42 +3400,75 @@ ${financialContext}`;
                                             <span className="text-[9px] text-slate-500 font-medium">/ 100</span>
                                         </div>
                                     </div>
-                                    <div>
-                                        <p className="text-sm font-bold" style={{ color: healthScore.color }}>{healthScore.label}</p>
-                                        {insights && (
-                                            <div className="mt-2 space-y-1">
-                                                <div className="flex justify-between gap-3 text-[11px]">
-                                                    <span className="text-slate-500">Daily avg</span>
-                                                    <span className="font-mono text-slate-300">{fmt(insights.dailyAvg)}</span>
-                                                </div>
-                                                <div className="flex justify-between gap-3 text-[11px]">
-                                                    <span className="text-slate-500">Top merchant</span>
-                                                    <span className="text-slate-300 truncate max-w-[80px] text-right">{insights.topMerchant}</span>
-                                                </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Financial Health</p>
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${healthScore.color}20`, color: healthScore.color }}>{healthScore.label}</span>
+                                        </div>
+                                        {healthScore.factors && (
+                                            <div className="space-y-1.5">
+                                                {healthScore.factors.map((f, i) => {
+                                                    const sc = f.status === 'great' ? '#0ecb81' : f.status === 'good' ? '#3b82f6' : f.status === 'fair' ? '#f59e0b' : '#ef4444';
+                                                    const bp = f.status === 'great' ? 100 : f.status === 'good' ? 72 : f.status === 'fair' ? 46 : 22;
+                                                    return (
+                                                        <div key={i} className="flex items-center gap-2">
+                                                            <span className="text-[10px] text-slate-400 w-16 shrink-0 truncate">{f.name}</span>
+                                                            <div className="flex-1 h-1 bg-slate-700/50 rounded-full overflow-hidden">
+                                                                <div className="h-full rounded-full" style={{ width: `${bp}%`, background: sc }} />
+                                                            </div>
+                                                            <span className="text-[10px] font-mono w-14 text-right shrink-0" style={{ color: sc }}>{f.value}</span>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
                                 </div>
-                                {healthScore.factors && healthScore.factors.length > 0 && (
-                                    <div className="space-y-2 border-t border-white/[0.05] pt-3 mt-auto">
-                                        {healthScore.factors.map((f, i) => {
-                                            const statusColor = f.status === 'great' ? '#0ecb81' : f.status === 'good' ? '#3b82f6' : f.status === 'fair' ? '#f59e0b' : '#ef4444';
-                                            const barPct = f.status === 'great' ? 100 : f.status === 'good' ? 72 : f.status === 'fair' ? 46 : 22;
-                                            return (
-                                                <div key={i} className="flex items-center gap-2">
-                                                    <span className="text-[10px] text-slate-400 w-16 shrink-0 truncate">{f.name}</span>
-                                                    <div className="flex-1 h-1 bg-slate-700/50 rounded-full overflow-hidden">
-                                                        <div className="h-full rounded-full" style={{ width: `${barPct}%`, background: statusColor }} />
+                            )}
+                            {/* Savings Rate gauge */}
+                            {summary.monthlyIncome > 0 && (() => {
+                                const rate = Math.max(-99, Math.min(99, Math.round((summary.monthlyNet / summary.monthlyIncome) * 100)));
+                                const color = rate >= 20 ? '#10F0A0' : rate >= 10 ? '#38BFFF' : rate >= 0 ? '#f59e0b' : '#FF5C7A';
+                                const label = rate >= 20 ? 'Excellent' : rate >= 10 ? 'Good' : rate >= 0 ? 'Tight' : 'Deficit';
+                                const dash = (Math.max(0, Math.min(rate, 50)) / 50) * 226.2;
+                                return (
+                                    <div className="glass-card p-5 flex items-center gap-5">
+                                        <div className="relative shrink-0" style={{ width: 88, height: 88 }}>
+                                            <svg viewBox="0 0 88 88" width="88" height="88" style={{ transform: 'rotate(-90deg)' }}>
+                                                <circle cx="44" cy="44" r="36" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
+                                                <circle cx="44" cy="44" r="36" fill="none"
+                                                    stroke={color} strokeWidth="8" strokeLinecap="round"
+                                                    strokeDasharray={`${Math.max(0, dash)} 226.2`}
+                                                    style={{ filter: `drop-shadow(0 0 6px ${color}80)`, transition: 'stroke-dasharray 1s ease-out' }} />
+                                            </svg>
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                                <span className="text-2xl font-bold leading-none" style={{ color }}>{rate}%</span>
+                                                <span className="text-[9px] text-slate-500 font-medium">saved</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Savings Rate</p>
+                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${color}20`, color }}>{label}</span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {[
+                                                    { l: 'Income / mo', v: fmt(summary.monthlyIncome), c: '#10F0A0' },
+                                                    { l: 'Spending / mo', v: fmt(summary.monthlySpending), c: '#FF5C7A' },
+                                                    { l: 'Net / mo', v: (summary.monthlyNet >= 0 ? '+' : '') + fmt(summary.monthlyNet), c: summary.monthlyNet >= 0 ? '#38BFFF' : '#FF5C7A' },
+                                                ].map(row => (
+                                                    <div key={row.l} className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-slate-500">{row.l}</span>
+                                                        <span className="font-mono font-semibold" style={{ color: row.c }}>{row.v}</span>
                                                     </div>
-                                                    <span className="text-[10px] font-mono w-14 text-right shrink-0" style={{ color: statusColor }}>{f.value}</span>
-                                                </div>
-                                            );
-                                        })}
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                                );
+                            })()}
+                        </div>
+                    )}
 
                     {/* ── 3. SPENDING PIE + BUDGET TRACKER ── */}
                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
@@ -3702,186 +3671,74 @@ ${financialContext}`;
                         </div>
                     </div>
 
-                    {/* ── 5. INCOME vs EXPENSES CHART ── */}
-                    {incomeExpenseTrend.length > 1 && (
-                        <div ref={chartContainerRef} className="chart-container p-5" style={{ position: 'relative' }}
-                            onMouseMove={(e) => {
-                                if (chartOverlayRef.current && chartContainerRef.current) {
-                                    const rect = chartContainerRef.current.getBoundingClientRect();
-                                    const x = e.clientX - rect.left;
-                                    const y = e.clientY - rect.top;
-                                    const ow = 172;
-                                    const ox = x + 18 + ow > rect.width - 8 ? x - ow - 10 : x + 18;
-                                    const oy = Math.max(8, Math.min(y - 50, rect.height - 110));
-                                    chartOverlayRef.current.style.left = ox + 'px';
-                                    chartOverlayRef.current.style.top = oy + 'px';
-                                    chartOverlayRef.current.style.opacity = '1';
-                                }
-                            }}
-                            onMouseLeave={() => {
-                                if (chartOverlayRef.current) chartOverlayRef.current.style.opacity = '0';
-                                setChartHoverData(null);
-                            }}
-                        >
-                            <div ref={chartOverlayRef} style={{
-                                position: 'absolute', zIndex: 20, opacity: 0,
-                                transition: 'opacity 0.12s ease', pointerEvents: 'none',
-                                background: 'rgba(3,8,16,0.94)', border: '1px solid rgba(255,255,255,0.12)',
-                                borderRadius: 12, padding: '10px 14px', backdropFilter: 'blur(16px)',
-                                width: 172, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                            }}>
-                                {chartHoverData ? (<>
-                                    <p style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600 }}>{chartHoverData.label}</p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>INCOME</span>{fmt(chartHoverData.income)}
-                                    </p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>EXPENSES</span>{fmt(chartHoverData.expenses)}
-                                    </p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: chartHoverData.net >= 0 ? '#38BFFF' : '#FF5C7A', display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>NET</span>{fmt(chartHoverData.net)}
-                                    </p>
-                                </>) : <p style={{ fontSize: 11, color: '#475569' }}>Hover over chart</p>}
-                            </div>
-                            <div className="flex items-center justify-between mb-4 relative">
-                                <div>
-                                    <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Income vs Expenses</h3>
-                                    <p style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Monthly trend · hover for details</p>
-                                </div>
-                                <div className="flex items-center gap-4" style={{ fontSize: 11 }}>
-                                    {[['Income','#10F0A0','#38BFFF'],['Expenses','#FF5C7A','#FBBF24'],['Net','#A78BFA','#38BFFF']].map(([label, c1, c2]) => (
-                                        <span key={label} className="flex items-center gap-1.5">
-                                            <span style={{ width: 16, height: 2.5, background: `linear-gradient(90deg,${c1},${c2})`, display: 'inline-block', borderRadius: 2 }} />
-                                            <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                    {/* ── 4. CHARTS — Income/Expense area + Monthly Net bars ── */}
+                    {incomeExpenseTrend.length > 0 && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {/* Income vs Expenses area chart */}
+                            <div className="glass-card p-5">
+                                <h3 className="text-sm font-semibold text-white mb-0.5">Income vs Expenses</h3>
+                                <p className="text-[10px] text-slate-500 mb-3">Monthly · synced with period filter</p>
+                                <div className="flex items-center gap-4 mb-3" style={{ fontSize: 11 }}>
+                                    {[['Income','#10F0A0'],['Expenses','#FF5C7A'],['Net','#A78BFA']].map(([lbl, c]) => (
+                                        <span key={lbl} className="flex items-center gap-1.5">
+                                            <span style={{ width: 14, height: 2, background: c, display: 'inline-block', borderRadius: 2 }} />
+                                            <span style={{ color: 'var(--text-muted)' }}>{lbl}</span>
                                         </span>
                                     ))}
                                 </div>
+                                <ResponsiveContainer width="100%" height={180}>
+                                    <AreaChart data={incomeExpenseTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                                        <defs>
+                                            <linearGradient id="incomeFill2" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor="#10F0A0" stopOpacity={0.25} />
+                                                <stop offset="100%" stopColor="#10F0A0" stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="expenseFill2" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor="#FF5C7A" stopOpacity={0.2} />
+                                                <stop offset="100%" stopColor="#FF5C7A" stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="netFill2" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor="#A78BFA" stopOpacity={0.15} />
+                                                <stop offset="100%" stopColor="#A78BFA" stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                        <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
+                                        <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={44} axisLine={false} tickLine={false} />
+                                        <Tooltip formatter={(v, n) => [fmt(v), n]} contentStyle={{ background: 'rgba(3,8,16,0.92)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                                        <Area type="monotone" dataKey="income" stroke="#10F0A0" strokeWidth={2} fill="url(#incomeFill2)" dot={false} activeDot={{ r: 4, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                        <Area type="monotone" dataKey="expenses" stroke="#FF5C7A" strokeWidth={2} fill="url(#expenseFill2)" dot={false} activeDot={{ r: 4, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                        <Area type="monotone" dataKey="net" stroke="#A78BFA" strokeWidth={1.5} fill="url(#netFill2)" dot={false} activeDot={{ r: 3, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
                             </div>
-                            <ResponsiveContainer width="100%" height={180}>
-                                <AreaChart data={incomeExpenseTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
-                                    onMouseMove={(e) => { if (e?.activePayload?.length) { const d = e.activePayload[0].payload; setChartHoverData({ label: d.label, income: d.income, expenses: d.expenses, net: d.net }); } }}
-                                    onMouseLeave={() => setChartHoverData(null)}
-                                >
-                                    <defs>
-                                        <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#10F0A0" stopOpacity={0.25} />
-                                            <stop offset="100%" stopColor="#10F0A0" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="expenseFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#FF5C7A" stopOpacity={0.2} />
-                                            <stop offset="100%" stopColor="#FF5C7A" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="netFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#A78BFA" stopOpacity={0.15} />
-                                            <stop offset="100%" stopColor="#A78BFA" stopOpacity={0} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                                    <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
-                                    <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={44} axisLine={false} tickLine={false} />
-                                    <Tooltip cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }} content={() => null} />
-                                    <Area type="monotone" dataKey="income" stroke="#10F0A0" strokeWidth={2} fill="url(#incomeFill)" dot={false} activeDot={{ r: 4, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
-                                    <Area type="monotone" dataKey="expenses" stroke="#FF5C7A" strokeWidth={2} fill="url(#expenseFill)" dot={false} activeDot={{ r: 4, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
-                                    <Area type="monotone" dataKey="net" stroke="#A78BFA" strokeWidth={1.5} fill="url(#netFill)" dot={false} activeDot={{ r: 3, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
-                                </AreaChart>
-                            </ResponsiveContainer>
+                            {/* Monthly Net cash flow bars */}
+                            <div className="glass-card p-5">
+                                <h3 className="text-sm font-semibold text-white mb-0.5">Monthly Net</h3>
+                                <p className="text-[10px] text-slate-500 mb-3">Green = surplus · Red = deficit</p>
+                                <ResponsiveContainer width="100%" height={180}>
+                                    <BarChart data={incomeExpenseTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                        <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
+                                        <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={44} axisLine={false} tickLine={false} />
+                                        <Tooltip formatter={(v) => [fmt(v), 'Net']} contentStyle={{ background: 'rgba(3,8,16,0.92)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                                        <Bar dataKey="net" radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                                            {incomeExpenseTrend.map((entry, i) => (
+                                                <Cell key={i} fill={entry.net >= 0 ? '#10F0A0' : '#FF5C7A'} fillOpacity={0.8} />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
                     )}
 
-                    {/* ── 5. CASH FLOW CALENDAR — hidden for now ── */}
-                    {false && (
-                    <div className="glass-card p-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-base font-semibold text-white flex items-center gap-2"><Calendar size={15} className="text-violet-400" /> Cash Flow Calendar</h3>
-                            <div className="flex items-center gap-1">
-                                <button onClick={() => { const [y,m] = calendarMonth.split('-').map(Number); const d = new Date(y,m-2,1); setCalendarMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); setCalendarDayPopover(null); }}
-                                    className="p-1.5 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-all"><ChevronLeft size={14} /></button>
-                                <span className="text-sm text-slate-300 w-32 text-center">{new Date(calendarMonth + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
-                                <button onClick={() => { const [y,m] = calendarMonth.split('-').map(Number); const d = new Date(y,m,1); setCalendarMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); setCalendarDayPopover(null); }}
-                                    className="p-1.5 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-all"><ChevronRight size={14} /></button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-7 gap-1 mb-1">
-                            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-[10px] text-slate-600 text-center font-medium py-1">{d}</div>)}
-                        </div>
-                        <div className="grid grid-cols-7 gap-1">
-                            {Array.from({ length: calendarData.firstDay }).map((_, i) => <div key={`e${i}`} />)}
-                            {Array.from({ length: calendarData.daysInMonth }, (_, i) => {
-                                const day = i + 1;
-                                const data = calendarData.days[day];
-                                const bills = calendarData.billDays[day] || [];
-                                const net = data ? data.income - data.expenses : 0;
-                                const today = new Date();
-                                const isToday = today.getFullYear() === calendarData.year && today.getMonth() + 1 === calendarData.month && today.getDate() === day;
-                                const isSelected = calendarDayPopover?.day === day;
-                                const hasActivity = data || bills.length > 0;
-                                return (
-                                    <div key={day}
-                                        onClick={() => {
-                                            if (!hasActivity) return;
-                                            setCalendarDayPopover(prev => prev?.day === day ? null : { day, txns: data?.txns || [], income: data?.income || 0, expenses: data?.expenses || 0, bills });
-                                        }}
-                                        className={`relative min-h-[50px] rounded-lg p-1.5 border text-center transition-all
-                                            ${hasActivity ? 'cursor-pointer hover:border-white/20 hover:brightness-125' : ''}
-                                            ${isSelected ? 'ring-1 ring-cyan-500/50 border-cyan-500/30' : isToday ? 'border-emerald-500/50 ring-1 ring-emerald-500/20' : 'border-white/[0.04]'}
-                                            ${data ? (net >= 0 ? 'bg-emerald-500/[0.06]' : 'bg-rose-500/[0.06]') : 'bg-white/[0.01]'}`}>
-                                        <span className={`text-[11px] font-semibold ${isToday ? 'text-emerald-400' : 'text-slate-500'}`}>{day}</span>
-                                        {data && <p className={`text-[9px] font-mono mt-0.5 ${net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{net >= 0 ? '+' : ''}{fmtShort(Math.abs(net))}</p>}
-                                        {bills.length > 0 && (
-                                            <div className="flex justify-center gap-0.5 mt-1">
-                                                {bills.slice(0,3).map((b, bi) => <div key={bi} className="w-1.5 h-1.5 rounded-full bg-amber-400" />)}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        {/* Day popover */}
-                        {calendarDayPopover && (
-                            <div className="mt-4 p-4 bg-white/[0.03] border border-white/[0.08] rounded-xl animate-fade-in">
-                                <div className="flex items-center justify-between mb-3">
-                                    <p className="text-sm font-semibold text-white">{new Date(calendarMonth + '-02').toLocaleDateString('en-US', { month: 'long' })} {calendarDayPopover.day}</p>
-                                    <div className="flex items-center gap-3 text-xs">
-                                        {calendarDayPopover.income > 0 && <span className="text-emerald-400 font-mono">+{fmt(calendarDayPopover.income)}</span>}
-                                        {calendarDayPopover.expenses > 0 && <span className="text-rose-400 font-mono">-{fmt(calendarDayPopover.expenses)}</span>}
-                                        <button onClick={() => setCalendarDayPopover(null)} className="text-slate-500 hover:text-white ml-1"><X size={13} /></button>
-                                    </div>
-                                </div>
-                                {calendarDayPopover.bills.length > 0 && (
-                                    <div className="mb-2 flex flex-wrap gap-1.5">
-                                        {calendarDayPopover.bills.map((b, i) => (
-                                            <span key={i} className="text-[10px] px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-full">{b.merchant} {fmt(b.avgAmount)} due</span>
-                                        ))}
-                                    </div>
-                                )}
-                                {calendarDayPopover.txns.length > 0 ? (
-                                    <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                                        {calendarDayPopover.txns.map((t, i) => (
-                                            <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-white/[0.04] last:border-0">
-                                                <span className="text-slate-300 truncate flex-1">{t.description.substring(0, 32)}</span>
-                                                <span className={`font-mono ml-3 shrink-0 ${t.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(t.amount)}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="text-xs text-slate-500 italic">Bill due — no transactions recorded yet</p>
-                                )}
-                            </div>
-                        )}
-                        <div className="flex items-center gap-5 mt-3 text-[10px] text-slate-600">
-                            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-emerald-500/30 border border-emerald-500/20" /> Positive day</span>
-                            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-rose-500/30 border border-rose-500/20" /> Negative day</span>
-                            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" /> Bill due</span>
-                        </div>
-                    </div>
-                    )}
-
-                    {/* ── 10. BALANCE TREND ── */}
+                    {/* ── 5. RUNNING BALANCE ── */}
                     {balanceTrend.length > 0 && (
-                        <div className="glass-card p-6">
-                            <h3 className="text-base font-semibold text-white mb-1">Running Balance</h3>
-                            <p className="text-xs text-slate-500 mb-4">Cumulative balance across all transactions over time</p>
-                            <ResponsiveContainer width="100%" height={200}>
+                        <div className="glass-card p-5">
+                            <h3 className="text-sm font-semibold text-white mb-0.5">Running Balance</h3>
+                            <p className="text-[10px] text-slate-500 mb-3">Cumulative balance · synced with period filter</p>
+                            <ResponsiveContainer width="100%" height={180}>
                                 <AreaChart data={balanceTrend}>
                                     <defs>
                                         <linearGradient id="balGrad" x1="0" y1="0" x2="0" y2="1">
@@ -3889,11 +3746,11 @@ ${financialContext}`;
                                             <stop offset="95%" stopColor="#0ecb81" stopOpacity={0} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                                    <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10 }} interval="preserveStartEnd" />
-                                    <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickFormatter={fmtShort} width={48} />
-                                    <Tooltip content={customTooltip} />
-                                    <Area type="monotone" dataKey="balance" stroke="#0ecb81" fill="url(#balGrad)" strokeWidth={2} name="Balance" />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                    <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                                    <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickFormatter={fmtShort} width={48} axisLine={false} tickLine={false} />
+                                    <Tooltip formatter={(v) => [fmt(v), 'Balance']} contentStyle={{ background: 'rgba(3,8,16,0.92)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }} />
+                                    <Area type="monotone" dataKey="balance" stroke="#0ecb81" fill="url(#balGrad)" strokeWidth={2} dot={false} isAnimationActive={false} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>

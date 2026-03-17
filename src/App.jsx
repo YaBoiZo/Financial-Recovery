@@ -3658,7 +3658,7 @@ ${financialContext}`;
                                                     {categoryTrends[c.name] === 'rising'  && <span className="text-rose-400 text-[10px]">▲</span>}
                                                     {categoryTrends[c.name] === 'falling' && <span className="text-emerald-400 text-[10px]">▼</span>}
                                                     <span className="font-mono text-slate-400 w-8 text-right">{c.pct.toFixed(0)}%</span>
-                                                    <span className="font-mono text-white w-16 text-right">{fmt(c.monthly)}</span>
+                                                    <span className="font-mono text-white w-16 text-right">{fmt(c.value)}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -8245,11 +8245,13 @@ ${financialContext}`;
     return (
         <div className="app-shell">
             <GalaxyBackground />
-            {/* ── SIDEBAR ── */}
-            <aside className="sidebar">
-                <div className="sidebar-header">
+
+            {/* ── TOP NAV ── */}
+            <header className="topbar">
+                {/* Logo */}
+                <div className="topnav-logo">
                     <div className="logo-mark">
-                        <DollarSign size={14} className="text-black" strokeWidth={2.8} />
+                        <DollarSign size={13} className="text-black" strokeWidth={2.8} />
                     </div>
                     <div>
                         <div className="wordmark">Recovery</div>
@@ -8257,94 +8259,48 @@ ${financialContext}`;
                     </div>
                 </div>
 
-                <nav className="sidebar-nav">
+                {/* Nav tabs */}
+                <nav className="topnav-tabs">
                     {TABS.map(tab => {
                         const legacyMyRecovery = tab.id === 'myrecovery' && ['recovery','savings','doctor'].includes(activeTab);
                         const isActive = activeTab === tab.id || legacyMyRecovery;
                         return (
                             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                                className={`sidebar-item ${isActive ? 'active' : ''}`}>
-                                <tab.icon size={14} strokeWidth={isActive ? 2.2 : 1.7} />
+                                className={`topnav-item ${isActive ? 'active' : ''}`}>
+                                <tab.icon size={13} strokeWidth={isActive ? 2.2 : 1.7} />
                                 <span>{tab.label}</span>
                             </button>
                         );
                     })}
                 </nav>
 
-                <div className="sidebar-footer">
-                    {transactions.length > 0 && (
-                        <div className="sidebar-stats">
-                            <div className="sidebar-stat-row">
-                                <span className="sidebar-stat-label">Income</span>
-                                <span className="sidebar-stat-val income">{fmtShort(summary.monthlyIncome)}</span>
-                            </div>
-                            <div className="sidebar-stat-row">
-                                <span className="sidebar-stat-label">Spent</span>
-                                <span className="sidebar-stat-val expense">{fmtShort(summary.monthlySpending)}</span>
-                            </div>
-                            <div className="sidebar-stat-divider" />
-                            <div className="sidebar-stat-row">
-                                <span className="sidebar-stat-label">Net</span>
-                                <span className={`sidebar-stat-val ${summary.monthlyNet >= 0 ? 'income' : 'expense'}`}>
-                                    {summary.monthlyNet >= 0 ? '+' : ''}{fmtShort(summary.monthlyNet)}
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                    {/* Active user badge */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, background: 'rgba(56,191,255,0.06)', border: '1px solid rgba(56,191,255,0.15)', marginBottom: 6 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #38BFFF, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: '#030810' }}>
-                            {activeUser[0].toUpperCase()}
-                        </div>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeUser}</span>
-                        <button onClick={handleSwitchUser} title="Switch User" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 0, display: 'flex', alignItems: 'center' }}>
-                            <ArrowUpRight size={13} style={{ transform: 'rotate(180deg)' }} />
-                        </button>
+                {/* Dashboard period filter */}
+                {activeTab === 'dashboard' && transactions.length > 0 && (
+                    <div className="flex items-center gap-0.5 p-0.5 rounded-xl" style={{ background: 'rgba(56,191,255,0.04)', border: '1px solid rgba(56,191,255,0.1)' }}>
+                        {[
+                            { key: 'all', label: 'All' },
+                            { key: 'last6', label: '6 Mo' },
+                            { key: 'last3', label: '3 Mo' },
+                            ...availableMonths.slice(-4).reverse().map(m => ({
+                                key: m,
+                                label: new Date(m + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+                            }))
+                        ].map(p => (
+                            <button key={p.key} onClick={() => setDashboardPeriod(p.key)}
+                                className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold transition-all"
+                                style={dashboardPeriod === p.key
+                                    ? { background: 'rgba(56,191,255,0.15)', color: '#38BFFF', boxShadow: '0 0 12px rgba(56,191,255,0.2)' }
+                                    : { color: 'var(--text-faint)' }}>
+                                {p.label}
+                            </button>
+                        ))}
                     </div>
-                    <button onClick={() => setShowProfilesModal(true)} className="sidebar-action">
-                        <User size={13} /><span>Sessions</span>
-                    </button>
-                    {transactions.length > 0 && (
-                        <button onClick={clearAllData} className="sidebar-action danger">
-                            <X size={13} /><span>Clear All</span>
-                        </button>
-                    )}
-                </div>
-            </aside>
+                )}
 
-            {/* ── MAIN COLUMN ── */}
-            <div className="main-col">
-                {/* Topbar */}
-                <header className="topbar">
-                    <div className="topbar-page-title">
-                        {activeTab === 'myrecovery' || activeTab === 'recovery' || activeTab === 'savings' || activeTab === 'doctor'
-                            ? 'My Recovery'
-                            : TABS.find(t => t.id === activeTab)?.label}
-                    </div>
-                    {/* Dashboard period filter — shown inline in topbar for quick access */}
-                    {activeTab === 'dashboard' && transactions.length > 0 && (
-                        <div className="flex items-center gap-1 p-1 rounded-xl mx-4" style={{ background: 'rgba(56,191,255,0.04)', border: '1px solid rgba(56,191,255,0.1)' }}>
-                            {[
-                                { key: 'all', label: 'All' },
-                                { key: 'last6', label: '6 Mo' },
-                                { key: 'last3', label: '3 Mo' },
-                                ...availableMonths.slice(-4).reverse().map(m => ({
-                                    key: m,
-                                    label: new Date(m + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-                                }))
-                            ].map(p => (
-                                <button key={p.key} onClick={() => setDashboardPeriod(p.key)}
-                                    className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold transition-all"
-                                    style={dashboardPeriod === p.key
-                                        ? { background: 'rgba(56,191,255,0.15)', color: '#38BFFF', boxShadow: '0 0 12px rgba(56,191,255,0.2)' }
-                                        : { color: 'var(--text-faint)' }}>
-                                    {p.label}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                {/* Right: status pills + user */}
+                <div className="topbar-right">
                     {transactions.length > 0 && (
-                        <div className="topbar-right">
+                        <>
                             <span className="status-pill status-pill-income">
                                 <span className="pulse-dot" />
                                 {fmt(summary.monthlyIncome)}<span className="pill-sub">/mo</span>
@@ -8357,27 +8313,45 @@ ${financialContext}`;
                                     {summary.monthlyNet >= 0 ? '+' : ''}{fmt(summary.monthlyNet)}<span className="pill-sub">/mo net</span>
                                 </span>
                             )}
-                        </div>
+                        </>
                     )}
-                </header>
+                    {/* User badge */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 8, background: 'rgba(56,191,255,0.06)', border: '1px solid rgba(56,191,255,0.15)' }}>
+                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'linear-gradient(135deg, #38BFFF, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11, fontWeight: 700, color: '#030810' }}>
+                            {activeUser[0].toUpperCase()}
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeUser}</span>
+                        <button onClick={handleSwitchUser} title="Switch User" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 0, display: 'flex', alignItems: 'center' }}>
+                            <ArrowUpRight size={11} style={{ transform: 'rotate(180deg)' }} />
+                        </button>
+                    </div>
+                    <button onClick={() => setShowProfilesModal(true)} className="topnav-action">
+                        <User size={12} /><span>Sessions</span>
+                    </button>
+                    {transactions.length > 0 && (
+                        <button onClick={clearAllData} className="topnav-action danger">
+                            <X size={12} /><span>Clear</span>
+                        </button>
+                    )}
+                </div>
+            </header>
 
-                {/* Page content */}
-                <main className="page-content" key={activeTab}>
-                    {activeTab === 'dashboard' && renderDashboard()}
-                    {activeTab === 'myrecovery' && renderMyRecovery()}
-                    {activeTab === 'finances' && renderFinances()}
-                    {activeTab === 'ledger' && renderLedger()}
-                    {activeTab === 'networth' && renderNetWorth()}
-                    {activeTab === 'advisor' && renderAdvisor()}
-                    {activeTab === 'tax' && renderTax()}
-                    {/* legacy routes for bookmarked tabs */}
-                    {activeTab === 'transactions' && renderFinances()}
-                    {activeTab === 'debts' && renderFinances()}
-                    {activeTab === 'recovery' && renderMyRecovery()}
-                    {activeTab === 'savings' && renderMyRecovery()}
-                    {activeTab === 'doctor' && renderMyRecovery()}
-                </main>
-            </div>
+            {/* Page content */}
+            <main className="page-content" key={activeTab}>
+                {activeTab === 'dashboard' && renderDashboard()}
+                {activeTab === 'myrecovery' && renderMyRecovery()}
+                {activeTab === 'finances' && renderFinances()}
+                {activeTab === 'ledger' && renderLedger()}
+                {activeTab === 'networth' && renderNetWorth()}
+                {activeTab === 'advisor' && renderAdvisor()}
+                {activeTab === 'tax' && renderTax()}
+                {/* legacy routes for bookmarked tabs */}
+                {activeTab === 'transactions' && renderFinances()}
+                {activeTab === 'debts' && renderFinances()}
+                {activeTab === 'recovery' && renderMyRecovery()}
+                {activeTab === 'savings' && renderMyRecovery()}
+                {activeTab === 'doctor' && renderMyRecovery()}
+            </main>
 
             {/* Onboarding */}
             {!onboardingDone && transactions.length === 0 && (

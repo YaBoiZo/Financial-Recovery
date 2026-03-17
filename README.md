@@ -104,10 +104,30 @@ Open `http://localhost:5173` in your browser.
 ### Build for macOS
 
 ```bash
-npm run electron:build
+npm run electron:build:mac
 ```
 
-Output is in the `release/` folder as a `.dmg` for both Apple Silicon and Intel.
+Output: `release/Financial Recovery-x.x.x.dmg` for both Apple Silicon (arm64) and Intel (x64).
+
+### Build for Windows
+
+Run this on a Windows machine:
+
+```bash
+npm run electron:build:win
+```
+
+Output: `release/Financial Recovery Setup x.x.x.exe` (NSIS installer) and a portable `.exe`. Both are 64-bit.
+
+### Build for Linux
+
+```bash
+npm run electron:build:linux
+```
+
+Output: `.AppImage` and `.deb` in the `release/` folder.
+
+> **Cross-platform builds**: Building a Windows `.exe` from macOS requires Wine and is not recommended. Build on the target OS for best results.
 
 ---
 

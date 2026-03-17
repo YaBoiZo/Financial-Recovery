@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, shell } = require('electron')
 const path = require('path')
+const isMac = process.platform === 'darwin'
 
 function createWindow() {
     const win = new BrowserWindow({
@@ -8,8 +9,12 @@ function createWindow() {
         minWidth: 960,
         minHeight: 640,
         title: 'Financial Recovery',
-        titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 20, y: 20 },
+        ...(isMac ? {
+            titleBarStyle: 'hiddenInset',
+            trafficLightPosition: { x: 20, y: 20 },
+        } : {
+            titleBarStyle: 'default',
+        }),
         backgroundColor: '#0f1117',
         webPreferences: {
             nodeIntegration: false,
@@ -22,9 +27,8 @@ function createWindow() {
         win.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
     } else {
         win.loadURL('http://localhost:5173')
+        win.webContents.openDevTools({ mode: 'detach' })
     }
-
-    win.webContents.openDevTools({ mode: 'detach' })
 
     win.webContents.on('console-message', (event, level, message, line, sourceId) => {
         if (level >= 2) console.error('[RENDERER]', message, 'at', sourceId, ':', line);
@@ -41,7 +45,7 @@ function createWindow() {
 
 function buildMenu() {
     const template = [
-        {
+        ...(isMac ? [{
             label: 'Financial Recovery',
             submenu: [
                 { role: 'about' },
@@ -51,7 +55,7 @@ function buildMenu() {
                 { type: 'separator' },
                 { role: 'quit' },
             ],
-        },
+        }] : []),
         {
             label: 'Edit',
             submenu: [
@@ -71,9 +75,9 @@ function buildMenu() {
         {
             label: 'Window',
             submenu: [
-                { role: 'minimize' }, { role: 'zoom' },
-                { type: 'separator' },
-                { role: 'front' },
+                { role: 'minimize' },
+                { role: 'zoom' },
+                ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [{ role: 'close' }]),
             ],
         },
     ]
@@ -89,5 +93,5 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    if (!isMac) app.quit()
 })

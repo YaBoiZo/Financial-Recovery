@@ -56,7 +56,7 @@ const CATEGORIES = [
 
 // ORDER MATTERS: more-specific categories first to avoid false matches
 const CATEGORY_KEYWORDS = {
-    'Transfers': ['tfr-to', 'tfr-fr', 'send e-tfr', 'pts to:', 'pts frm:', 'ssv to:', 'ssv frm:', 'cash app', 'wire', 'atm dep', 'moved funds', 'to:td c/c', 'payment - thank you', 'payment thank you', 'online payment', 'payment received'],
+    'Transfers': ['tfr-to', 'tfr-fr', 'send e-tfr', 'pts to:', 'pts frm:', 'ssv to:', 'ssv frm:', 'cash app', 'wire', 'atm dep', 'moved funds', 'to:td c/c', 'payment - thank you', 'payment thank you', 'online payment', 'payment received', 'credit card payment', 'credit card pmt', 'td credit card', 'td visa', 'td mastercard', 'visa payment', 'mastercard payment', 'cc payment', 'cc pmt'],
     'Cash & ATM': ['atm w/d', 'fx atm w/d', 'cash withdra', 'cash withdrawal'],
     'Income': ['redpath sugar', 'gc 3384-deposit', 'e-transfer', 'mobile deposit', 'cancel e-tfr', 'deposit', 'payroll', 'salary', 'income', 'direct dep', 'employer', 'refund', 'reimbursement', 'cashback', 'dividend', 'interest earned'],
     'Mortgage': ['td mortgage', 'mortgage', 'mtg pmt', 'home loan', 'first national', 'mcap', 'rbc mortgage', 'bmo mortgage', 'cibc mortgage', 'scotiabank mtg'],
@@ -74,7 +74,7 @@ const CATEGORY_KEYWORDS = {
     'Healthcare': ['pharmacy', 'cvs', 'walgreens', 'doctor', 'hospital', 'medical', 'dental', 'health', 'clinic', 'optom', 'vision', 'rexall', 'shoppers drug', 'trillium health', 'vogue optic', 'juravinski'],
     'Shopping': ['amazon', 'amzn', 'walmart', 'wal-mart', 'target', 'costco', 'best buy', 'home depot', 'ikea', 'macys', 'nordstrom', 'ebay', 'etsy', 'dollarama', 'dollar tree', 'winners', 'coach', 'michael kors', 'zara', 'urban behavior', 'hm square', 'hm ca', 'sephora', 'daisy mart', 'staples', 'petsmart', 'pet valu', 'canadian tire', 'cell zone', 'future tech', 'ls khairi', 'cobblestone', 'maruti', 'puma canada', 'skechers', 'automania', 'vip vape', 'select vape', 'cpc / scp', 'goodness me', 'claire\'s #', '#391 sport', 'kate spade', 'columbia 5', 'sp knix', 'ls ag perfume', 'the village', 'store '],
     'Utilities': ['electric', 'water', 'gas bill', 'internet', 'comcast', 'att', 'verizon', 't-mobile', 'utility', 'power', 'sewage', 'trash', 'waste', 'xfinity', 'spectrum', 'phone bill', 'metergy', 'ez-pay'],
-    'Debt Payments': ['loan', 'credit card', 'chase', 'capital one', 'amex', 'discover', 'minimum payment', 'student loan', 'car payment', 'michael hill', 'jordan barber'],
+    'Debt Payments': ['loan payment', 'loan pmt', 'minimum payment', 'student loan', 'car payment', 'auto payment', 'michael hill', 'jordan barber'],
 };
 
 const CHART_COLORS = ['#0ecb81', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#ef4444', '#06b6d4', '#f97316', '#14b8a6', '#e11d48', '#64748b', '#94a3b8'];
@@ -1794,18 +1794,21 @@ export default function App() {
     }, [transactions, accounts]);
 
     const summary = useMemo(() => {
-        const liveIsTransfer = (t) => {
-            const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
-            return cat === 'Transfers';
-        };
+        const liveCategory = (t) => merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
+        const liveIsTransfer = (t) => liveCategory(t) === 'Transfers';
         const nonTransfer = dashboardTx.filter(t => !liveIsTransfer(t) && !transferTxIds.has(t.id));
         const income = nonTransfer.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-        const spending = nonTransfer.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
+        // Separate debt payments from discretionary spending to avoid inflation
+        const debtPaymentTxs = nonTransfer.filter(t => t.amount < 0 && liveCategory(t) === 'Debt Payments');
+        const spendingTxs = nonTransfer.filter(t => t.amount < 0 && liveCategory(t) !== 'Debt Payments');
+        const spending = spendingTxs.reduce((s, t) => s + Math.abs(t.amount), 0);
+        const debtPaymentsVol = debtPaymentTxs.reduce((s, t) => s + Math.abs(t.amount), 0);
         const transferVol = dashboardTx.filter(t => liveIsTransfer(t) || transferTxIds.has(t.id)).reduce((s, t) => s + Math.abs(t.amount), 0);
         const m = dashboardRange.months;
         return {
-            income, spending, net: income - spending, transferVol,
-            monthlyIncome: income / m, monthlySpending: spending / m, monthlyNet: (income - spending) / m,
+            income, spending, net: income - spending - debtPaymentsVol, transferVol, debtPaymentsVol,
+            monthlyIncome: income / m, monthlySpending: spending / m, monthlyNet: (income - spending - debtPaymentsVol) / m,
+            monthlyDebtPayments: debtPaymentsVol / m,
             months: m, monthsOfData: m,
         };
     }, [dashboardTx, dashboardRange, transferTxIds, merchantOverrides]);
@@ -1867,7 +1870,7 @@ export default function App() {
         const countMap = {};
         dashboardTx.filter(t => t.amount < 0 && !transferTxIds.has(t.id)).forEach(t => {
             const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category || 'Other';
-            if (cat === 'Transfers') return;
+            if (cat === 'Transfers' || cat === 'Debt Payments') return;
             map[cat] = (map[cat] || 0) + Math.abs(t.amount);
             countMap[cat] = (countMap[cat] || 0) + 1;
         });
@@ -3657,6 +3660,11 @@ ${financialContext}`;
                                                 </div>
                                             </div>
                                             <p className="text-[9px] text-slate-600 text-center mt-1">Click a slice to drill in</p>
+                                            {summary.debtPaymentsVol > 0 && (
+                                                <p className="text-[9px] text-slate-500 text-center mt-0.5">
+                                                    +{fmtShort(summary.debtPaymentsVol)} debt pmts
+                                                </p>
+                                            )}
                                         </div>
                                         <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[170px] pr-1">
                                             {pieData.map((c, i) => (

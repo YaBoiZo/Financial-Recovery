@@ -3637,16 +3637,25 @@ ${financialContext}`;
                                     <>
                                     <div className="flex gap-4">
                                         <div className="shrink-0">
-                                            <ResponsiveContainer width={160} height={160}>
-                                                <PieChart>
-                                                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value"
-                                                        onClick={(data) => setSelectedCategory(prev => prev === data.name ? null : data.name)}
-                                                        style={{ cursor: 'pointer' }}>
-                                                        {pieData.map((c, i) => <Cell key={i} fill={c.color} opacity={!selectedCategory || selectedCategory === c.name ? 1 : 0.3} />)}
-                                                    </Pie>
-                                                    <Tooltip formatter={(v) => fmt(v)} />
-                                                </PieChart>
-                                            </ResponsiveContainer>
+                                            <div className="relative" style={{ width: 160, height: 160 }}>
+                                                <ResponsiveContainer width={160} height={160}>
+                                                    <PieChart>
+                                                        <Pie data={pieData} cx="50%" cy="50%" innerRadius={42} outerRadius={76} paddingAngle={2} dataKey="value"
+                                                            onClick={(data) => setSelectedCategory(prev => prev === data.name ? null : data.name)}
+                                                            style={{ cursor: 'pointer' }}>
+                                                            {pieData.map((c, i) => <Cell key={i} fill={c.color} opacity={!selectedCategory || selectedCategory === c.name ? 1 : 0.3} />)}
+                                                        </Pie>
+                                                        <Tooltip formatter={(v) => fmt(v)} />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                                {/* Center label — total spending for period */}
+                                                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                                    <span className="text-[9px] text-slate-500 uppercase tracking-wide leading-none mb-0.5">spent</span>
+                                                    <span className="text-[13px] font-bold font-mono text-white leading-none">
+                                                        {fmtShort(pieData.reduce((s, c) => s + c.value, 0))}
+                                                    </span>
+                                                </div>
+                                            </div>
                                             <p className="text-[9px] text-slate-600 text-center mt-1">Click a slice to drill in</p>
                                         </div>
                                         <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[170px] pr-1">

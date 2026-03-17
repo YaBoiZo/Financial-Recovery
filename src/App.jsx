@@ -3289,114 +3289,7 @@ ${financialContext}`;
                 </div>
             ) : (
                 <>
-                    {/* ── 0a. YOUR SITUATION RIGHT NOW ── */}
-                    {situationSummary && survivabilityVerdict && (
-                        <div className={`glass-card p-5 border-l-[3px] animate-fade-in ${
-                            survivabilityVerdict.color === 'rose' ? 'border-l-rose-500' :
-                            survivabilityVerdict.color === 'amber' ? 'border-l-amber-500' :
-                            'border-l-emerald-500'
-                        }`}>
-                            <div className="flex items-start justify-between gap-4 mb-3">
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your Situation Right Now</span>
-                                <span className={`shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wide ${
-                                    survivabilityVerdict.color === 'rose' ? 'bg-rose-500/20 text-rose-400' :
-                                    survivabilityVerdict.color === 'amber' ? 'bg-amber-500/20 text-amber-400' :
-                                    'bg-emerald-500/20 text-emerald-400'
-                                }`}>{survivabilityVerdict.label}</span>
-                            </div>
-                            <p className="text-sm text-slate-200 leading-relaxed mb-2">{situationSummary}</p>
-                            <p className={`text-xs leading-relaxed mb-3 ${
-                                survivabilityVerdict.color === 'rose' ? 'text-rose-300/80' :
-                                survivabilityVerdict.color === 'amber' ? 'text-amber-300/80' :
-                                'text-emerald-300/80'
-                            }`}>{survivabilityVerdict.message}</p>
-                            <p className="text-[11px] text-slate-500 italic">{survivabilityVerdict.timeline}</p>
-                        </div>
-                    )}
-
-                    {/* ── 0b. THE ONE THING ── */}
-                    {weeklyFocus && (
-                        <div className={`glass-card p-5 border animate-fade-in ${
-                            weeklyFocusDone ? 'border-emerald-500/30 bg-emerald-500/[0.03]' :
-                            weeklyFocus.urgency === 'critical' ? 'border-rose-500/30' :
-                            weeklyFocus.urgency === 'high' ? 'border-amber-500/30' :
-                            weeklyFocus.urgency === 'medium' ? 'border-blue-500/25' :
-                            'border-emerald-500/20'
-                        }`}>
-                            <div className="flex items-center justify-between mb-4">
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your One Job This Week</span>
-                                <span className="text-[10px] text-slate-600 font-medium">~{weeklyFocus.time}</span>
-                            </div>
-                            <div className="flex items-start gap-4">
-                                <button onClick={() => setWeeklyFocusDone(d => !d)}
-                                    className={`shrink-0 w-11 h-11 rounded-xl border-2 flex items-center justify-center text-xl transition-all ${
-                                        weeklyFocusDone ? 'bg-emerald-500 border-emerald-400 text-white text-base' :
-                                        weeklyFocus.urgency === 'critical' ? 'border-rose-500/50 hover:border-rose-400' :
-                                        weeklyFocus.urgency === 'high' ? 'border-amber-500/50 hover:border-amber-400' :
-                                        'border-slate-600 hover:border-slate-400'
-                                    }`}>
-                                    {weeklyFocusDone ? '✓' : weeklyFocus.icon}
-                                </button>
-                                <div className="flex-1 min-w-0">
-                                    <h3 className={`text-base font-bold mb-1 leading-snug ${weeklyFocusDone ? 'text-emerald-400 line-through opacity-60' : 'text-white'}`}>
-                                        {weeklyFocus.title}
-                                    </h3>
-                                    {weeklyFocusDone ? (
-                                        <p className="text-sm text-emerald-400/80">Done for this week. Check back next week for a new priority.</p>
-                                    ) : (
-                                        <>
-                                            <p className="text-xs text-slate-400 leading-relaxed mb-3">{weeklyFocus.detail}</p>
-                                            <ol className="space-y-2">
-                                                {weeklyFocus.steps.map((step, i) => (
-                                                    <li key={i} className="flex items-start gap-2.5 text-xs text-slate-300">
-                                                        <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold mt-0.5 ${
-                                                            weeklyFocus.urgency === 'critical' ? 'bg-rose-500/25 text-rose-400' :
-                                                            weeklyFocus.urgency === 'high' ? 'bg-amber-500/25 text-amber-400' :
-                                                            'bg-slate-600/50 text-slate-400'
-                                                        }`}>{i + 1}</span>
-                                                        {step}
-                                                    </li>
-                                                ))}
-                                            </ol>
-                                        </>
-                                    )}
-                                </div>
-                                {!weeklyFocusDone && (
-                                    <button onClick={() => setActiveTab(weeklyFocus.tab)}
-                                        className="shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap self-start"
-                                        style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.3)' }}>
-                                        Go →
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── 0c. COST OF DOING NOTHING ── */}
-                    {doNothingProjection && (
-                        <div className="px-5 py-4 rounded-xl border border-rose-500/20 bg-rose-500/[0.03] animate-fade-in">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">If nothing changes — next 12 months</p>
-                            <div className="grid grid-cols-3 gap-4">
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-1">Interest you'll pay</p>
-                                    <p className="text-xl font-bold font-mono text-rose-400">{fmt(doNothingProjection.interestThisYear)}</p>
-                                    <p className="text-[10px] text-slate-600 mt-0.5">this year alone</p>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-1">Your debt in 12 mo</p>
-                                    <p className="text-xl font-bold font-mono text-rose-400">{fmt(doNothingProjection.debtIn12Months)}</p>
-                                    <p className="text-[10px] text-slate-600 mt-0.5">{doNothingProjection.debtGrowth > 0 ? `+${fmt(doNothingProjection.debtGrowth)} vs today` : 'same as today'}</p>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-1">Follow the plan instead</p>
-                                    <p className="text-xl font-bold font-mono text-emerald-400">Save {fmt(doNothingProjection.interestThisYear + doNothingProjection.debtGrowth)}</p>
-                                    <p className="text-[10px] text-slate-600 mt-0.5">vs doing nothing</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── 1. DATA RANGE INFO ── */}
+                    {/* ── 1. DATA RANGE + STAT TILES ── */}
                     <div className="flex items-center gap-2 text-xs">
                         <Calendar size={12} className="text-emerald-400" />
                         <span className="text-slate-400 font-medium">{dashboardPeriod === 'all' ? dataRange.label : dashboardRange.label}</span>
@@ -3405,7 +3298,6 @@ ${financialContext}`;
                         {transferTxIds.size > 0 && <span className="text-sky-600">· {Math.floor(transferTxIds.size / 2)} transfers excluded</span>}
                     </div>
 
-                    {/* ── 2. STAT CARDS — drag-to-reorder ── */}
                     {(() => {
                         const tileMap = {
                             networth: { label: 'Net Worth',        value: netWorth.net,            icon: PiggyBank,    sub: netWorth.assets > 0 ? `${fmt(netWorth.assets)} assets` : 'Set account balances', themeColor: '#A78BFA', glowColor: 'rgba(167,139,250,0.35)', numClass: 'num-neutral' },
@@ -3458,409 +3350,272 @@ ${financialContext}`;
                         );
                     })()}
 
-                    {/* ── 2b. DEBT-FREE DATE CARD ── */}
-                    {totalDebtBalance > 0 && totalDebtPayments > 0 && (() => {
-                        const moToFree = Math.ceil(totalDebtBalance / totalDebtPayments);
-                        if (moToFree >= 999) return null;
-                        const freeDate = new Date();
-                        freeDate.setMonth(freeDate.getMonth() + moToFree);
-                        const dateStr = freeDate.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
-                        const yrs = Math.floor(moToFree / 12);
-                        const mos = moToFree % 12;
-                        const timeStr = yrs > 0 ? `${yrs}yr ${mos > 0 ? mos + 'mo' : ''}` : `${mos} months`;
-                        const estInterest = debts.reduce((s, d) => {
-                            const bal = Number(d.amount); const r = Number(d.interestRate) / 100 / 12;
-                            const pmt = Number(d.monthlyPayment) || 0;
-                            if (r <= 0 || pmt <= 0) return s;
-                            const mo = pmt > bal * r ? Math.ceil(-Math.log(1 - (r * bal / pmt)) / Math.log(1 + r)) : moToFree;
-                            const total = pmt * Math.min(mo, moToFree);
-                            return s + Math.max(0, total - bal);
-                        }, 0);
-                        return (
-                            <div className="glass-card p-4 flex items-center gap-4 animate-fade-in" style={{ borderTop: '1px solid rgba(56,191,255,0.18)', boxShadow: '0 0 28px rgba(56,191,255,0.05)' }}>
-                                <div className="w-11 h-11 rounded-xl bg-sky-500/12 border border-sky-500/25 flex items-center justify-center shrink-0">
-                                    <Target size={20} className="text-sky-400" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Projected Debt-Free</p>
-                                    <p className="text-base font-bold text-white mt-0.5">{dateStr} <span className="text-xs text-slate-400 font-normal">· {timeStr} away</span></p>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">{fmt(totalDebtBalance)} remaining · {fmt(totalDebtPayments)}/mo payments</p>
-                                </div>
-                                {estInterest > 50 && (
-                                    <div className="shrink-0 text-right hidden sm:block">
-                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Interest cost</p>
-                                        <p className="font-mono text-sm text-rose-400 font-semibold">{fmt(estInterest)}</p>
-                                        <p className="text-[9px] text-slate-600">if paid on schedule</p>
+                    {/* ── 2. SITUATION + HEALTH SCORE ── */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        {/* Left: situation + alerts + wins */}
+                        <div className="lg:col-span-2 space-y-3">
+                            {situationSummary && survivabilityVerdict && (
+                                <div className={`glass-card p-4 border-l-[3px] animate-fade-in ${
+                                    survivabilityVerdict.color === 'rose' ? 'border-l-rose-500' :
+                                    survivabilityVerdict.color === 'amber' ? 'border-l-amber-500' :
+                                    'border-l-emerald-500'
+                                }`}>
+                                    <div className="flex items-start justify-between gap-3 mb-2">
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your Situation Right Now</span>
+                                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
+                                            survivabilityVerdict.color === 'rose' ? 'bg-rose-500/20 text-rose-400' :
+                                            survivabilityVerdict.color === 'amber' ? 'bg-amber-500/20 text-amber-400' :
+                                            'bg-emerald-500/20 text-emerald-400'
+                                        }`}>{survivabilityVerdict.label}</span>
                                     </div>
-                                )}
-                            </div>
-                        );
-                    })()}
-
-                    {/* ── 3. ALERTS ── compact pill chips */}
-                    {(anomalies.length > 0 || upcomingBills.length > 0 || runway || suspiciousFlags.size > 0 || (nwTrend.length >= 2 && Math.abs(nwTrend[nwTrend.length-1].nw - nwTrend[0].nw) >= 100)) && (
-                        <div className="flex flex-wrap gap-2">
-                            {runway && (
-                                <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${runway.critical ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
-                                    <AlertTriangle size={11} className="shrink-0" />
-                                    {runway.months === 0
-                                        ? 'Cash runway critical — savings depleted'
-                                        : `Deficit mode · savings last ~${runway.months}mo`}
+                                    <p className="text-sm text-slate-200 leading-relaxed mb-1">{situationSummary}</p>
+                                    <p className={`text-xs leading-relaxed ${
+                                        survivabilityVerdict.color === 'rose' ? 'text-rose-300/70' :
+                                        survivabilityVerdict.color === 'amber' ? 'text-amber-300/70' :
+                                        'text-emerald-300/70'
+                                    }`}>{survivabilityVerdict.message}</p>
                                 </div>
                             )}
-                            {suspiciousFlags.size > 0 && (() => {
-                                const warnCount = [...suspiciousFlags.values()].filter(f => f.severity === 'warn').length;
-                                if (warnCount === 0) return null;
-                                return (
-                                    <button onClick={() => setActiveTab('finances')}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 transition-all cursor-pointer">
-                                        <AlertTriangle size={11} className="shrink-0" />
-                                        {warnCount} suspicious transaction{warnCount !== 1 ? 's' : ''} flagged · check My Finances
-                                    </button>
-                                );
-                            })()}
-                            {anomalies.slice(0, 2).map((a, i) => (
-                                <div key={i} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${a.type === 'high' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
-                                    <AlertTriangle size={11} className="shrink-0" />
-                                    {a.type === 'high' ? '⚠' : '✓'} {a.category} {a.type === 'high' ? `${((a.ratio - 1) * 100).toFixed(0)}% above` : `${((1 - a.ratio) * 100).toFixed(0)}% below`} normal
-                                </div>
-                            ))}
-                            {upcomingBills.slice(0, 3).map((bill, i) => (
-                                <div key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border bg-amber-500/8 border-amber-500/25 text-[11px] font-medium text-amber-300">
-                                    <Calendar size={11} className="shrink-0" />
-                                    {bill.merchant} <span className="font-mono text-amber-400">{bill.nextDue.slice(5)}</span> · <span className="font-mono text-rose-400">{fmt(bill.avgAmount)}</span>
-                                </div>
-                            ))}
-                            {nwTrend.length >= 2 && (() => {
-                                const delta = nwTrend[nwTrend.length-1].nw - nwTrend[0].nw;
-                                if (Math.abs(delta) < 100) return null;
-                                return (
-                                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${delta > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
-                                        {delta > 0 ? <TrendingUp size={11} className="shrink-0" /> : <TrendingDown size={11} className="shrink-0" />}
-                                        Net worth {delta > 0 ? 'up' : 'down'} {fmt(Math.abs(delta))} since {nwTrend[0].label}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    )}
-
-                    {/* ── 3b. WINS STRIP ── */}
-                    {wins.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                            {wins.map((w, i) => (
-                                <div key={i} className={`win-card flex items-center gap-2 px-3 py-2 text-xs text-emerald-300 animate-slide-up stagger-${Math.min(i+1,6)}`}>
-                                    <span className="text-base leading-none">{w.icon}</span>
-                                    <span className="font-medium">{w.text}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* ── 3c. ACTION PLAN ── dominant recommendation engine */}
-                    {actionPlan.length > 0 && (
-                        <div className="action-plan-card animate-slide-up">
-                            <div className="action-plan-glow" />
-                            <div className="flex items-center gap-3 mb-5">
-                                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg, rgba(52,211,153,0.25), rgba(96,165,250,0.15))', border: '1px solid rgba(52,211,153,0.35)' }}>
-                                    <Target size={15} style={{ color: '#34D399' }} strokeWidth={2.2} />
-                                </div>
-                                <div>
-                                    <h3 className="text-sm font-bold text-white leading-none">Your Action Plan</h3>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">Top priorities right now</p>
-                                </div>
-                                <div className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold" style={{ background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)', color: '#34D399' }}>
-                                    {actionPlan.length} item{actionPlan.length !== 1 ? 's' : ''}
-                                </div>
-                            </div>
-                            <div className="space-y-2.5">
-                                {actionPlan.map((a, i) => {
-                                    const priorityMeta = {
-                                        critical: { border: '#FB7185', bg: 'rgba(251,113,133,0.06)', badge: 'rgba(251,113,133,0.15)', badgeText: '#FB7185', label: 'Critical' },
-                                        high:     { border: '#F59E0B', bg: 'rgba(245,158,11,0.06)',  badge: 'rgba(245,158,11,0.15)',  badgeText: '#F59E0B', label: 'High' },
-                                        medium:   { border: '#60A5FA', bg: 'rgba(96,165,250,0.06)',  badge: 'rgba(96,165,250,0.15)',  badgeText: '#60A5FA', label: 'Medium' },
-                                        low:      { border: '#34D399', bg: 'rgba(52,211,153,0.06)',  badge: 'rgba(52,211,153,0.15)',  badgeText: '#34D399', label: 'Low' },
-                                    };
-                                    const m = priorityMeta[a.priority] || priorityMeta.medium;
-                                    return (
-                                        <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-xl animate-slide-up stagger-${i+1}`}
-                                            style={{ background: m.bg, borderLeft: `3px solid ${m.border}`, border: `1px solid ${m.border}25`, borderLeftWidth: 3 }}>
-                                            <span className="text-xl leading-none shrink-0">{a.icon}</span>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-0.5">
-                                                    <p className="text-sm font-semibold text-white leading-none">{a.title}</p>
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0" style={{ background: m.badge, color: m.badgeText }}>{m.label}</span>
-                                                </div>
-                                                <p className="text-xs text-slate-400 leading-relaxed">{a.desc}</p>
-                                            </div>
-                                            <button onClick={() => setActiveTab(a.tab)}
-                                                className="shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap"
-                                                style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.3)' }}
-                                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(52,211,153,0.22)'; e.currentTarget.style.boxShadow = '0 0 12px rgba(52,211,153,0.3)'; }}
-                                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(52,211,153,0.12)'; e.currentTarget.style.boxShadow = 'none'; }}>
-                                                {a.action} →
-                                            </button>
+                            {/* Alerts */}
+                            {(anomalies.length > 0 || upcomingBills.length > 0 || runway || suspiciousFlags.size > 0 || (nwTrend.length >= 2 && Math.abs(nwTrend[nwTrend.length-1].nw - nwTrend[0].nw) >= 100)) && (
+                                <div className="flex flex-wrap gap-2">
+                                    {runway && (
+                                        <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${runway.critical ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
+                                            <AlertTriangle size={11} className="shrink-0" />
+                                            {runway.months === 0 ? 'Cash runway critical — savings depleted' : `Deficit mode · savings last ~${runway.months}mo`}
                                         </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── 3d. THIS MONTH SO FAR ── */}
-                    {thisMonth.spentSoFar > 0 && (
-                        <div className="glass-card p-4">
-                            <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                    <Calendar size={13} className="text-cyan-400" />
-                                    This Month So Far
-                                    <span className="text-[10px] text-slate-500 font-normal">Day {thisMonth.dayOfMonth} of {thisMonth.daysInMonth} · {thisMonth.pctOfMonth}% through</span>
-                                </h3>
-                                {thisMonth.vsAvg !== null && (
-                                    <span className={`text-xs font-mono ${thisMonth.vsAvg > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                        pace: {fmt(thisMonth.pace)}/mo {thisMonth.vsAvg > 0 ? `(${fmt(thisMonth.vsAvg)} above avg)` : `(${fmt(Math.abs(thisMonth.vsAvg))} below avg)`}
-                                    </span>
-                                )}
-                            </div>
-                            <div className="grid grid-cols-3 gap-3 text-center">
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-0.5">Earned</p>
-                                    <p className="text-base font-bold font-mono text-emerald-400">{fmt(thisMonth.earnedSoFar)}</p>
+                                    )}
+                                    {suspiciousFlags.size > 0 && (() => {
+                                        const warnCount = [...suspiciousFlags.values()].filter(f => f.severity === 'warn').length;
+                                        if (warnCount === 0) return null;
+                                        return (
+                                            <button onClick={() => setActiveTab('finances')}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 transition-all">
+                                                <AlertTriangle size={11} className="shrink-0" />
+                                                {warnCount} suspicious transaction{warnCount !== 1 ? 's' : ''} flagged
+                                            </button>
+                                        );
+                                    })()}
+                                    {anomalies.slice(0, 2).map((a, i) => (
+                                        <div key={i} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${a.type === 'high' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
+                                            {a.type === 'high' ? '⚠' : '✓'} {a.category} {a.type === 'high' ? `${((a.ratio - 1) * 100).toFixed(0)}% above` : `${((1 - a.ratio) * 100).toFixed(0)}% below`} normal
+                                        </div>
+                                    ))}
+                                    {upcomingBills.slice(0, 2).map((bill, i) => (
+                                        <div key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border bg-amber-500/8 border-amber-500/25 text-[11px] font-medium text-amber-300">
+                                            <Calendar size={11} className="shrink-0" />
+                                            {bill.merchant} <span className="font-mono text-amber-400 ml-1">{bill.nextDue.slice(5)}</span> · <span className="font-mono text-rose-400">{fmt(bill.avgAmount)}</span>
+                                        </div>
+                                    ))}
+                                    {nwTrend.length >= 2 && (() => {
+                                        const delta = nwTrend[nwTrend.length-1].nw - nwTrend[0].nw;
+                                        if (Math.abs(delta) < 100) return null;
+                                        return (
+                                            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${delta > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
+                                                {delta > 0 ? <TrendingUp size={11} className="shrink-0" /> : <TrendingDown size={11} className="shrink-0" />}
+                                                Net worth {delta > 0 ? 'up' : 'down'} {fmt(Math.abs(delta))} since {nwTrend[0].label}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-0.5">Spent</p>
-                                    <p className="text-base font-bold font-mono text-rose-400">{fmt(thisMonth.spentSoFar)}</p>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] text-slate-500 mb-0.5">Net</p>
-                                    <p className={`text-base font-bold font-mono ${thisMonth.earnedSoFar - thisMonth.spentSoFar >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{fmt(thisMonth.earnedSoFar - thisMonth.spentSoFar)}</p>
-                                </div>
-                            </div>
-                            {summary.monthlySpending > 0 && (
-                                <div className="mt-3">
-                                    <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-                                        <span>Spending pace</span>
-                                        <span>{Math.round((thisMonth.pace / summary.monthlySpending) * 100)}% of avg monthly</span>
-                                    </div>
-                                    <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                                        <div className={`h-full rounded-full transition-all ${thisMonth.pace > summary.monthlySpending * 1.1 ? 'bg-rose-500' : thisMonth.pace > summary.monthlySpending * 0.9 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                                            style={{ width: `${Math.min(100, (thisMonth.pace / (summary.monthlySpending * 1.5)) * 100)}%` }} />
-                                    </div>
+                            )}
+                            {/* Wins */}
+                            {wins.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {wins.slice(0, 4).map((w, i) => (
+                                        <div key={i} className="win-card flex items-center gap-2 px-3 py-1.5 text-xs text-emerald-300">
+                                            <span className="text-sm leading-none">{w.icon}</span>
+                                            <span className="font-medium">{w.text}</span>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>
-                    )}
-
-                    {/* ── 3e. AI INSIGHTS PANEL ── */}
-                    {actionPlan.length > 0 && (
-                        <div className="ai-insight-panel px-5 py-4 animate-slide-up">
-                            <div className="ai-insight-orb" />
-                            <div className="flex items-start gap-4">
-                                <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-                                    style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.3), rgba(96,165,250,0.2))', border: '1px solid rgba(139,92,246,0.3)' }}>
-                                    <Sparkles size={16} style={{ color: '#a78bfa' }} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#a78bfa' }}>AI Insight</span>
-                                        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 500, padding: '1px 6px', background: 'rgba(139,92,246,0.1)', borderRadius: 4, border: '1px solid rgba(139,92,246,0.15)' }}>TOP PRIORITY</span>
+                        {/* Right: Health Score compact */}
+                        {healthScore && (
+                            <div className="glass-card p-4 health-score-card flex flex-col">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Financial Health</p>
+                                <div className="flex items-center gap-4 mb-3">
+                                    <div className="relative shrink-0" style={{ width: 88, height: 88 }}>
+                                        <svg viewBox="0 0 88 88" width="88" height="88" style={{ transform: 'rotate(-90deg)' }}>
+                                            <defs>
+                                                <linearGradient id="healthRingGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                                    <stop offset="0%" stopColor={healthScore.color} stopOpacity="0.7" />
+                                                    <stop offset="100%" stopColor={healthScore.color} />
+                                                </linearGradient>
+                                                <filter id="healthGlow">
+                                                    <feGaussianBlur stdDeviation="3" result="blur"/>
+                                                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                                </filter>
+                                            </defs>
+                                            <circle cx="44" cy="44" r="36" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
+                                            <circle cx="44" cy="44" r="36" fill="none"
+                                                stroke="url(#healthRingGrad)" strokeWidth="8"
+                                                strokeLinecap="round"
+                                                strokeDasharray={`${(healthScore.score / 100) * 226.2} 226.2`}
+                                                filter="url(#healthGlow)"
+                                                style={{ transition: 'stroke-dasharray 1s ease-out' }} />
+                                        </svg>
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                            <span className="text-2xl font-bold leading-none" style={{ color: healthScore.color }}>{healthScore.score}</span>
+                                            <span className="text-[9px] text-slate-500 font-medium">/ 100</span>
+                                        </div>
                                     </div>
-                                    <p style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600, lineHeight: 1.5 }}>
-                                        {actionPlan[0]?.title}
-                                    </p>
-                                    {actionPlan[0]?.desc && (
-                                        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>{actionPlan[0].desc}</p>
+                                    <div>
+                                        <p className="text-sm font-bold" style={{ color: healthScore.color }}>{healthScore.label}</p>
+                                        {insights && (
+                                            <div className="mt-2 space-y-1">
+                                                <div className="flex justify-between gap-3 text-[11px]">
+                                                    <span className="text-slate-500">Daily avg</span>
+                                                    <span className="font-mono text-slate-300">{fmt(insights.dailyAvg)}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-3 text-[11px]">
+                                                    <span className="text-slate-500">Top merchant</span>
+                                                    <span className="text-slate-300 truncate max-w-[80px] text-right">{insights.topMerchant}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                {healthScore.factors && healthScore.factors.length > 0 && (
+                                    <div className="space-y-2 border-t border-white/[0.05] pt-3 mt-auto">
+                                        {healthScore.factors.map((f, i) => {
+                                            const statusColor = f.status === 'great' ? '#0ecb81' : f.status === 'good' ? '#3b82f6' : f.status === 'fair' ? '#f59e0b' : '#ef4444';
+                                            const barPct = f.status === 'great' ? 100 : f.status === 'good' ? 72 : f.status === 'fair' ? 46 : 22;
+                                            return (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <span className="text-[10px] text-slate-400 w-16 shrink-0 truncate">{f.name}</span>
+                                                    <div className="flex-1 h-1 bg-slate-700/50 rounded-full overflow-hidden">
+                                                        <div className="h-full rounded-full" style={{ width: `${barPct}%`, background: statusColor }} />
+                                                    </div>
+                                                    <span className="text-[10px] font-mono w-14 text-right shrink-0" style={{ color: statusColor }}>{f.value}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── 3. ACTION PLAN + THIS MONTH + DEBT-FREE ── */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {/* Action Plan — compact (title + badge + button, no desc) */}
+                        {actionPlan.length > 0 && (
+                            <div className="action-plan-card animate-slide-up">
+                                <div className="action-plan-glow" />
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg, rgba(52,211,153,0.25), rgba(96,165,250,0.15))', border: '1px solid rgba(52,211,153,0.35)' }}>
+                                        <Target size={13} style={{ color: '#34D399' }} strokeWidth={2.2} />
+                                    </div>
+                                    <h3 className="text-sm font-bold text-white">Action Plan</h3>
+                                    <button onClick={() => setActiveTab('myrecovery')} className="ml-auto text-[10px] font-medium text-slate-400 hover:text-emerald-400 transition-colors">Full plan →</button>
+                                </div>
+                                <div className="space-y-2">
+                                    {actionPlan.slice(0, 5).map((a, i) => {
+                                        const priorityMeta = {
+                                            critical: { border: '#FB7185', bg: 'rgba(251,113,133,0.06)', badge: 'rgba(251,113,133,0.15)', badgeText: '#FB7185', label: 'Critical' },
+                                            high:     { border: '#F59E0B', bg: 'rgba(245,158,11,0.06)',  badge: 'rgba(245,158,11,0.15)',  badgeText: '#F59E0B', label: 'High' },
+                                            medium:   { border: '#60A5FA', bg: 'rgba(96,165,250,0.06)',  badge: 'rgba(96,165,250,0.15)',  badgeText: '#60A5FA', label: 'Medium' },
+                                            low:      { border: '#34D399', bg: 'rgba(52,211,153,0.06)',  badge: 'rgba(52,211,153,0.15)',  badgeText: '#34D399', label: 'Low' },
+                                        };
+                                        const m = priorityMeta[a.priority] || priorityMeta.medium;
+                                        return (
+                                            <div key={i} className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
+                                                style={{ background: m.bg, borderLeft: `2px solid ${m.border}`, border: `1px solid ${m.border}20`, borderLeftWidth: 2 }}>
+                                                <span className="text-base leading-none shrink-0">{a.icon}</span>
+                                                <p className="text-xs font-semibold text-white flex-1 min-w-0 truncate">{a.title}</p>
+                                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase shrink-0" style={{ background: m.badge, color: m.badgeText }}>{m.label}</span>
+                                                <button onClick={() => setActiveTab(a.tab)}
+                                                    className="shrink-0 text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all whitespace-nowrap"
+                                                    style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.3)' }}>
+                                                    Go →
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                        {/* This Month + Debt-Free stacked */}
+                        <div className="space-y-4">
+                            {thisMonth.spentSoFar > 0 && (
+                                <div className="glass-card p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                            <Calendar size={13} className="text-cyan-400" />
+                                            This Month So Far
+                                        </h3>
+                                        <span className="text-[10px] text-slate-500">Day {thisMonth.dayOfMonth}/{thisMonth.daysInMonth}</span>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 mb-0.5">Earned</p>
+                                            <p className="text-sm font-bold font-mono text-emerald-400">{fmt(thisMonth.earnedSoFar)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 mb-0.5">Spent</p>
+                                            <p className="text-sm font-bold font-mono text-rose-400">{fmt(thisMonth.spentSoFar)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 mb-0.5">Net</p>
+                                            <p className={`text-sm font-bold font-mono ${thisMonth.earnedSoFar - thisMonth.spentSoFar >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{fmt(thisMonth.earnedSoFar - thisMonth.spentSoFar)}</p>
+                                        </div>
+                                    </div>
+                                    {summary.monthlySpending > 0 && (
+                                        <>
+                                            <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                                                <div className={`h-full rounded-full transition-all ${thisMonth.pace > summary.monthlySpending * 1.1 ? 'bg-rose-500' : thisMonth.pace > summary.monthlySpending * 0.9 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                    style={{ width: `${Math.min(100, (thisMonth.pace / (summary.monthlySpending * 1.5)) * 100)}%` }} />
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mt-1">Spending pace: {fmt(thisMonth.pace)}/mo ({Math.round((thisMonth.pace / summary.monthlySpending) * 100)}% of avg)</p>
+                                        </>
                                     )}
                                 </div>
-                                {actionPlan.length > 1 && (
-                                    <div className="hidden lg:flex flex-col gap-2 shrink-0" style={{ minWidth: 200 }}>
-                                        {actionPlan.slice(1).map((a, i) => (
-                                            <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                                                <span style={{ color: 'rgba(139,92,246,0.6)', fontWeight: 700, flexShrink: 0 }}>#{i+2}</span>
-                                                <span style={{ lineHeight: 1.4 }}>{a.title}</span>
+                            )}
+                            {totalDebtBalance > 0 && totalDebtPayments > 0 && (() => {
+                                const moToFree = Math.ceil(totalDebtBalance / totalDebtPayments);
+                                if (moToFree >= 999) return null;
+                                const freeDate = new Date();
+                                freeDate.setMonth(freeDate.getMonth() + moToFree);
+                                const dateStr = freeDate.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+                                const yrs = Math.floor(moToFree / 12);
+                                const mos = moToFree % 12;
+                                const timeStr = yrs > 0 ? `${yrs}yr ${mos > 0 ? mos + 'mo' : ''}` : `${mos} months`;
+                                const estInterest = debts.reduce((s, d) => {
+                                    const bal = Number(d.amount); const r = Number(d.interestRate) / 100 / 12;
+                                    const pmt = Number(d.monthlyPayment) || 0;
+                                    if (r <= 0 || pmt <= 0) return s;
+                                    const mo = pmt > bal * r ? Math.ceil(-Math.log(1 - (r * bal / pmt)) / Math.log(1 + r)) : moToFree;
+                                    const total = pmt * Math.min(mo, moToFree);
+                                    return s + Math.max(0, total - bal);
+                                }, 0);
+                                return (
+                                    <div className="glass-card p-4 flex items-center gap-3" style={{ borderTop: '1px solid rgba(56,191,255,0.18)' }}>
+                                        <div className="w-9 h-9 rounded-xl bg-sky-500/12 border border-sky-500/25 flex items-center justify-center shrink-0">
+                                            <Target size={16} className="text-sky-400" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Projected Debt-Free</p>
+                                            <p className="text-sm font-bold text-white mt-0.5">{dateStr} <span className="text-xs text-slate-400 font-normal">· {timeStr}</span></p>
+                                            <p className="text-[10px] text-slate-500 mt-0.5">{fmt(totalDebtBalance)} remaining · {fmt(totalDebtPayments)}/mo</p>
+                                        </div>
+                                        {estInterest > 50 && (
+                                            <div className="shrink-0 text-right">
+                                                <p className="text-[10px] text-slate-500">Interest cost</p>
+                                                <p className="font-mono text-xs text-rose-400 font-semibold">{fmt(estInterest)}</p>
                                             </div>
-                                        ))}
+                                        )}
                                     </div>
-                                )}
-                            </div>
+                                );
+                            })()}
                         </div>
-                    )}
+                    </div>
 
-                    {/* ── 3b. WHERE YOUR MONEY IS GOING — top-spending answer ── */}
-                    {categoryData.length > 0 && (
-                        <div className="glass-card p-5">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-base font-semibold text-white">Where Your Money Is Going</h3>
-                                <span className="text-xs text-slate-500">{dashboardPeriod === 'all' ? 'All time' : dashboardPeriod === 'last3' ? 'Last 3 months' : dashboardPeriod === 'last6' ? 'Last 6 months' : dashboardPeriod} avg</span>
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                                {categoryData.slice(0, 5).map((cat, i) => (
-                                    <div key={cat.name} className="p-3 rounded-xl bg-white/[0.025] border border-white/[0.06]">
-                                        <div className="flex items-center gap-1.5 mb-1.5">
-                                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: cat.color }} />
-                                            <p className="text-[11px] text-slate-400 truncate">{cat.name}</p>
-                                        </div>
-                                        <p className="text-base font-bold font-mono text-white">{fmtShort(cat.monthly)}</p>
-                                        <p className="text-[10px] text-slate-500 mt-0.5">/mo · {cat.pct.toFixed(0)}%</p>
-                                        <div className="h-1 bg-slate-700/50 rounded-full mt-2 overflow-hidden">
-                                            <div className="h-full rounded-full" style={{ width: `${Math.min(100, cat.pct)}%`, background: cat.color }} />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── 4. INCOME vs EXPENSES — Gradient Area Chart ── */}
-                    {incomeExpenseTrend.length > 1 && (
-                        <div ref={chartContainerRef} className="chart-container p-6" style={{ position: 'relative' }}
-                            onMouseMove={(e) => {
-                                // Update overlay position directly via DOM ref — zero re-renders, perfectly smooth
-                                if (chartOverlayRef.current && chartContainerRef.current) {
-                                    const rect = chartContainerRef.current.getBoundingClientRect();
-                                    const x = e.clientX - rect.left;
-                                    const y = e.clientY - rect.top;
-                                    const ow = 172;
-                                    const ox = x + 18 + ow > rect.width - 8 ? x - ow - 10 : x + 18;
-                                    const oy = Math.max(8, Math.min(y - 50, rect.height - 110));
-                                    chartOverlayRef.current.style.left = ox + 'px';
-                                    chartOverlayRef.current.style.top = oy + 'px';
-                                    chartOverlayRef.current.style.opacity = '1';
-                                }
-                            }}
-                            onMouseLeave={() => {
-                                if (chartOverlayRef.current) chartOverlayRef.current.style.opacity = '0';
-                                setChartHoverData(null);
-                            }}
-                        >
-                            {/* Cursor-following overlay — positioned via DOM ref, no re-renders */}
-                            <div ref={chartOverlayRef} style={{
-                                position: 'absolute', zIndex: 20,
-                                opacity: 0,
-                                transition: 'opacity 0.12s ease',
-                                pointerEvents: 'none',
-                                background: 'rgba(3,8,16,0.94)', border: '1px solid rgba(255,255,255,0.12)',
-                                borderRadius: 12, padding: '10px 14px',
-                                backdropFilter: 'blur(16px)',
-                                width: 172,
-                                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                            }}>
-                                {chartHoverData ? (<>
-                                    <p style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600, letterSpacing: '0.04em' }}>{chartHoverData.label}</p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>INCOME</span>{fmt(chartHoverData.income)}
-                                    </p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>EXPENSES</span>{fmt(chartHoverData.expenses)}
-                                    </p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: chartHoverData.net >= 0 ? '#38BFFF' : '#FF5C7A', display: 'flex', justifyContent: 'space-between' }}>
-                                        <span style={{ color: '#475569', fontSize: 10 }}>NET</span>{fmt(chartHoverData.net)}
-                                    </p>
-                                </>) : <p style={{ fontSize: 11, color: '#475569' }}>Hover over chart</p>}
-                            </div>
-                            {/* Floating particles */}
-                            {[...Array(6)].map((_, i) => (
-                                <div key={i} className="chart-particle" style={{
-                                    left: `${10 + i * 15}%`,
-                                    bottom: `${15 + (i % 3) * 12}%`,
-                                    animationDuration: `${4 + i * 0.8}s`,
-                                    animationDelay: `${i * 0.6}s`,
-                                    background: i % 3 === 0 ? 'var(--income)' : i % 3 === 1 ? 'var(--expense)' : 'var(--net)',
-                                    width: i % 2 === 0 ? 3 : 2,
-                                    height: i % 2 === 0 ? 3 : 2,
-                                }} />
-                            ))}
-                            <div className="flex items-start justify-between mb-5 relative">
-                                <div>
-                                    <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-                                        Income vs Expenses
-                                    </h3>
-                                    <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Monthly trend · hover for details</p>
-                                </div>
-                                <div className="flex items-center gap-4" style={{ fontSize: 11 }}>
-                                    <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#10F0A0,#38BFFF)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(16,240,160,0.6)' }} />
-                                        <span style={{ color: 'var(--text-muted)' }}>Income</span>
-                                    </span>
-                                    <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#FF5C7A,#FBBF24)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(255,92,122,0.6)' }} />
-                                        <span style={{ color: 'var(--text-muted)' }}>Expenses</span>
-                                    </span>
-                                    <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#A78BFA,#38BFFF)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(167,139,250,0.6)' }} />
-                                        <span style={{ color: 'var(--text-muted)' }}>Net</span>
-                                    </span>
-                                </div>
-                            </div>
-                            <ResponsiveContainer width="100%" height={240}>
-                                <AreaChart data={incomeExpenseTrend} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
-                                    onMouseMove={(e) => {
-                                        if (e?.activePayload?.length) {
-                                            const d = e.activePayload[0].payload;
-                                            setChartHoverData({ label: d.label, income: d.income, expenses: d.expenses, net: d.net });
-                                        }
-                                    }}
-                                    onMouseLeave={() => setChartHoverData(null)}
-                                >
-                                    <defs>
-                                        <linearGradient id="incomeGrad" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor="#10F0A0" />
-                                            <stop offset="100%" stopColor="#38BFFF" />
-                                        </linearGradient>
-                                        <linearGradient id="expenseGrad" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor="#FF5C7A" />
-                                            <stop offset="100%" stopColor="#FBBF24" />
-                                        </linearGradient>
-                                        <linearGradient id="netGrad" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor="#A78BFA" />
-                                            <stop offset="100%" stopColor="#38BFFF" />
-                                        </linearGradient>
-                                        <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#10F0A0" stopOpacity={0.28} />
-                                            <stop offset="100%" stopColor="#10F0A0" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="expenseFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#FF5C7A" stopOpacity={0.22} />
-                                            <stop offset="100%" stopColor="#FF5C7A" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="netFill" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#A78BFA" stopOpacity={0.18} />
-                                            <stop offset="100%" stopColor="#A78BFA" stopOpacity={0} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                                    <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
-                                    <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={48} axisLine={false} tickLine={false} />
-                                    <Tooltip
-                                        cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }}
-                                        content={() => null}
-                                    />
-                                    <Area type="monotone" dataKey="income" name="Income"
-                                        stroke="#10F0A0" strokeWidth={2.5}
-                                        fill="url(#incomeFill)" dot={false}
-                                        activeDot={{ r: 5, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2 }}
-                                        isAnimationActive={false}
-                                    />
-                                    <Area type="monotone" dataKey="expenses" name="Expenses"
-                                        stroke="#FF5C7A" strokeWidth={2.5}
-                                        fill="url(#expenseFill)" dot={false}
-                                        activeDot={{ r: 5, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2 }}
-                                        isAnimationActive={false}
-                                    />
-                                    <Area type="monotone" dataKey="net" name="Net"
-                                        stroke="#A78BFA" strokeWidth={2}
-                                        fill="url(#netFill)" dot={false}
-                                        activeDot={{ r: 4, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2 }}
-                                        isAnimationActive={false}
-                                    />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
-                    )}
-
-                    {/* ── 5. SPENDING BREAKDOWN + HEALTH ── */}
-                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-                        {/* Spending pie + category list */}
-                        <div className="glass-card p-6 lg:col-span-3">
+                    {/* ── 4. SPENDING PIE + BUDGET TRACKER ── */}
+                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                        {/* Spending pie (3/5) */}
+                        <div className="glass-card p-5 lg:col-span-3">
                             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                                 <div>
                                     <h3 className="text-base font-semibold text-white">Spending by Category</h3>
@@ -3992,82 +3747,143 @@ ${financialContext}`;
                             })()}
                         </div>
 
-                        {/* Health score + quick insights */}
-                        <div className="lg:col-span-2 space-y-3">
-                            {healthScore && (
-                                <div className="glass-card p-6 health-score-card">
-                                    <div className="flex flex-col items-center mb-5">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Financial Health</p>
-                                        {/* Full-circle SVG ring */}
-                                        <div className="relative" style={{ width: 130, height: 130 }}>
-                                            <svg viewBox="0 0 130 130" width="130" height="130" style={{ transform: 'rotate(-90deg)' }}>
-                                                <defs>
-                                                    <linearGradient id="healthRingGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                                        <stop offset="0%" stopColor={healthScore.color} stopOpacity="0.7" />
-                                                        <stop offset="100%" stopColor={healthScore.color} />
-                                                    </linearGradient>
-                                                    <filter id="healthGlow">
-                                                        <feGaussianBlur stdDeviation="4" result="blur"/>
-                                                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                                                    </filter>
-                                                </defs>
-                                                {/* Track */}
-                                                <circle cx="65" cy="65" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="10" />
-                                                {/* Progress */}
-                                                <circle cx="65" cy="65" r="52" fill="none"
-                                                    stroke={`url(#healthRingGrad)`} strokeWidth="10"
-                                                    strokeLinecap="round"
-                                                    strokeDasharray={`${(healthScore.score / 100) * 326.7} 326.7`}
-                                                    filter="url(#healthGlow)"
-                                                    style={{ transition: 'stroke-dasharray 1s ease-out' }} />
-                                            </svg>
-                                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                                <span className="text-4xl font-bold leading-none" style={{ color: healthScore.color, textShadow: `0 0 24px ${healthScore.color}80` }}>{healthScore.score}</span>
-                                                <span className="text-[10px] text-slate-500 mt-1 font-medium">/ 100</span>
+                        {/* Budget Tracker (2/5) */}
+                        <div className="glass-card p-5 lg:col-span-2">
+                            <div className="flex items-center justify-between mb-3">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Target size={13} className="text-amber-400" /> Budget Tracker</h3>
+                                    <p className="text-[10px] text-slate-500">This month vs targets</p>
+                                </div>
+                                <button onClick={() => setShowBudgetEditor(e => !e)}
+                                    className="text-[10px] text-slate-400 hover:text-white border border-white/10 hover:border-white/20 px-2.5 py-1 rounded-lg transition-all">
+                                    {showBudgetEditor ? 'Done' : 'Edit'}
+                                </button>
+                            </div>
+                            {showBudgetEditor && (
+                                <div className="mb-4 p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                                    <p className="text-[10px] text-slate-500 mb-2">Set monthly targets — blank = auto from history.</p>
+                                    <div className="grid grid-cols-1 gap-1.5">
+                                        {CATEGORIES.filter(c => !['Income', 'Transfers'].includes(c.name)).map(cat => (
+                                            <div key={cat.name} className="flex items-center gap-2 bg-white/[0.02] border border-white/5 rounded-lg px-2.5 py-1.5">
+                                                <cat.icon size={10} style={{ color: cat.color }} className="shrink-0" />
+                                                <span className="text-[10px] text-slate-400 truncate flex-1">{cat.name}</span>
+                                                <input type="number" placeholder="auto"
+                                                    value={categoryBudgets[cat.name] ?? ''}
+                                                    onChange={e => setCategoryBudgets(prev => ({ ...prev, [cat.name]: e.target.value }))}
+                                                    className="w-14 bg-transparent text-[10px] text-right text-white border-b border-white/10 focus:border-emerald-500 outline-none font-mono" />
                                             </div>
-                                        </div>
-                                        <span className="text-base font-bold mt-3" style={{ color: healthScore.color }}>{healthScore.label}</span>
+                                        ))}
                                     </div>
-                                    {healthScore.factors && healthScore.factors.length > 0 && (
-                                        <div className="space-y-2.5 border-t border-white/[0.05] pt-4">
-                                            {healthScore.factors.map((f, i) => {
-                                                const statusColor = f.status === 'great' ? '#0ecb81' : f.status === 'good' ? '#3b82f6' : f.status === 'fair' ? '#f59e0b' : '#ef4444';
-                                                const barPct = f.status === 'great' ? 100 : f.status === 'good' ? 72 : f.status === 'fair' ? 46 : 22;
-                                                return (
-                                                    <div key={i} className="flex items-center gap-2.5">
-                                                        <span className="text-[10px] text-slate-400 w-20 shrink-0 truncate font-medium">{f.name}</span>
-                                                        <div className="flex-1 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                                                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${barPct}%`, background: `linear-gradient(90deg, ${statusColor}99, ${statusColor})`, boxShadow: `0 0 6px ${statusColor}60` }} />
-                                                        </div>
-                                                        <span className="text-[10px] font-mono w-16 text-right shrink-0" style={{ color: statusColor }}>{f.value}</span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
                                 </div>
                             )}
-                            {insights && (
-                                <div className="glass-card p-5 space-y-3">
-                                    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Quick Insights</h3>
-                                    <div className="space-y-2 text-xs">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-400">Daily avg spend</span>
-                                            <span className="font-mono text-white">{fmt(insights.dailyAvg)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-400">Largest expense</span>
-                                            <span className="font-mono text-rose-400">{fmt(Math.abs(insights.largest.amount))}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-400">Top merchant</span>
-                                            <span className="text-slate-200 truncate max-w-[100px] text-right">{insights.topMerchant}</span>
-                                        </div>
-                                    </div>
+                            {(budgetProgress.length > 0 || autoBudgets.length > 0) ? (
+                                <div className="space-y-2">
+                                    {(budgetProgress.length > 0 ? budgetProgress.map(b => ({ cat: b.cat, spent: b.spent, budget: b.budget, pct: b.pct })) : autoBudgets.map(b => ({ cat: b.category, spent: b.actual, budget: b.budget, pct: b.pct }))).map((b, i) => {
+                                        const over = b.pct > 100, warn = b.pct > 80;
+                                        return (
+                                            <div key={i} className={`p-2.5 rounded-xl border ${over ? 'bg-rose-500/5 border-rose-500/20' : warn ? 'bg-amber-500/5 border-amber-500/15' : 'bg-white/[0.015] border-white/5'}`}>
+                                                <div className="flex justify-between text-xs mb-1">
+                                                    <span className="text-slate-300 font-medium truncate">{b.cat}</span>
+                                                    <span className={`font-mono ml-2 shrink-0 text-[11px] ${over ? 'text-rose-400' : warn ? 'text-amber-400' : 'text-slate-500'}`}>{fmt(b.spent)}<span className="text-slate-600">/{fmt(b.budget)}</span></span>
+                                                </div>
+                                                <div className="h-1 bg-slate-700/50 rounded-full overflow-hidden">
+                                                    <div className={`h-full rounded-full transition-all ${over ? 'bg-rose-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, b.pct)}%` }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
+                            ) : (
+                                <p className="text-xs text-slate-500 text-center py-8">Click "Edit" to set monthly targets.</p>
                             )}
                         </div>
                     </div>
+
+                    {/* ── 5. INCOME vs EXPENSES CHART ── */}
+                    {incomeExpenseTrend.length > 1 && (
+                        <div ref={chartContainerRef} className="chart-container p-5" style={{ position: 'relative' }}
+                            onMouseMove={(e) => {
+                                if (chartOverlayRef.current && chartContainerRef.current) {
+                                    const rect = chartContainerRef.current.getBoundingClientRect();
+                                    const x = e.clientX - rect.left;
+                                    const y = e.clientY - rect.top;
+                                    const ow = 172;
+                                    const ox = x + 18 + ow > rect.width - 8 ? x - ow - 10 : x + 18;
+                                    const oy = Math.max(8, Math.min(y - 50, rect.height - 110));
+                                    chartOverlayRef.current.style.left = ox + 'px';
+                                    chartOverlayRef.current.style.top = oy + 'px';
+                                    chartOverlayRef.current.style.opacity = '1';
+                                }
+                            }}
+                            onMouseLeave={() => {
+                                if (chartOverlayRef.current) chartOverlayRef.current.style.opacity = '0';
+                                setChartHoverData(null);
+                            }}
+                        >
+                            <div ref={chartOverlayRef} style={{
+                                position: 'absolute', zIndex: 20, opacity: 0,
+                                transition: 'opacity 0.12s ease', pointerEvents: 'none',
+                                background: 'rgba(3,8,16,0.94)', border: '1px solid rgba(255,255,255,0.12)',
+                                borderRadius: 12, padding: '10px 14px', backdropFilter: 'blur(16px)',
+                                width: 172, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                            }}>
+                                {chartHoverData ? (<>
+                                    <p style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600 }}>{chartHoverData.label}</p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>INCOME</span>{fmt(chartHoverData.income)}
+                                    </p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>EXPENSES</span>{fmt(chartHoverData.expenses)}
+                                    </p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: chartHoverData.net >= 0 ? '#38BFFF' : '#FF5C7A', display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>NET</span>{fmt(chartHoverData.net)}
+                                    </p>
+                                </>) : <p style={{ fontSize: 11, color: '#475569' }}>Hover over chart</p>}
+                            </div>
+                            <div className="flex items-center justify-between mb-4 relative">
+                                <div>
+                                    <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Income vs Expenses</h3>
+                                    <p style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>Monthly trend · hover for details</p>
+                                </div>
+                                <div className="flex items-center gap-4" style={{ fontSize: 11 }}>
+                                    {[['Income','#10F0A0','#38BFFF'],['Expenses','#FF5C7A','#FBBF24'],['Net','#A78BFA','#38BFFF']].map(([label, c1, c2]) => (
+                                        <span key={label} className="flex items-center gap-1.5">
+                                            <span style={{ width: 16, height: 2.5, background: `linear-gradient(90deg,${c1},${c2})`, display: 'inline-block', borderRadius: 2 }} />
+                                            <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                            <ResponsiveContainer width="100%" height={180}>
+                                <AreaChart data={incomeExpenseTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                                    onMouseMove={(e) => { if (e?.activePayload?.length) { const d = e.activePayload[0].payload; setChartHoverData({ label: d.label, income: d.income, expenses: d.expenses, net: d.net }); } }}
+                                    onMouseLeave={() => setChartHoverData(null)}
+                                >
+                                    <defs>
+                                        <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#10F0A0" stopOpacity={0.25} />
+                                            <stop offset="100%" stopColor="#10F0A0" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="expenseFill" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#FF5C7A" stopOpacity={0.2} />
+                                            <stop offset="100%" stopColor="#FF5C7A" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="netFill" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#A78BFA" stopOpacity={0.15} />
+                                            <stop offset="100%" stopColor="#A78BFA" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                    <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
+                                    <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={44} axisLine={false} tickLine={false} />
+                                    <Tooltip cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }} content={() => null} />
+                                    <Area type="monotone" dataKey="income" stroke="#10F0A0" strokeWidth={2} fill="url(#incomeFill)" dot={false} activeDot={{ r: 4, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                    <Area type="monotone" dataKey="expenses" stroke="#FF5C7A" strokeWidth={2} fill="url(#expenseFill)" dot={false} activeDot={{ r: 4, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                    <Area type="monotone" dataKey="net" stroke="#A78BFA" strokeWidth={1.5} fill="url(#netFill)" dot={false} activeDot={{ r: 3, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2 }} isAnimationActive={false} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
 
                     {/* ── 6. TOP MERCHANTS + DAY-OF-WEEK ── */}
                     {(topMerchants.length > 0 || weekdaySpending.length > 0) && (
@@ -4164,61 +3980,7 @@ ${financialContext}`;
                         </div>
                     )}
 
-                    {/* ── 8. BUDGET TRACKER ── */}
-                    <div className="glass-card p-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <div>
-                                <h3 className="text-base font-semibold text-white flex items-center gap-2"><Target size={15} className="text-amber-400" /> Budget Tracker</h3>
-                                <p className="text-xs text-slate-500">Current month spending vs your targets</p>
-                            </div>
-                            <button onClick={() => setShowBudgetEditor(e => !e)}
-                                className="text-xs text-slate-400 hover:text-white border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition-all">
-                                {showBudgetEditor ? 'Done' : 'Edit Budgets'}
-                            </button>
-                        </div>
-                        {showBudgetEditor && (
-                            <div className="mb-5 p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                                <p className="text-xs text-slate-500 mb-3">Set monthly targets — leave blank to use auto-suggested amounts from your history.</p>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                    {CATEGORIES.filter(c => !['Income', 'Transfers'].includes(c.name)).map(cat => (
-                                        <div key={cat.name} className="flex items-center gap-2 bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2">
-                                            <cat.icon size={11} style={{ color: cat.color }} className="shrink-0" />
-                                            <span className="text-[10px] text-slate-400 truncate flex-1">{cat.name}</span>
-                                            <input type="number" placeholder="auto"
-                                                value={categoryBudgets[cat.name] ?? ''}
-                                                onChange={e => setCategoryBudgets(prev => ({ ...prev, [cat.name]: e.target.value }))}
-                                                className="w-14 bg-transparent text-[10px] text-right text-white border-b border-white/10 focus:border-emerald-500 outline-none font-mono" />
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        {(budgetProgress.length > 0 || autoBudgets.length > 0) ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                {(budgetProgress.length > 0 ? budgetProgress.map(b => ({ cat: b.cat, spent: b.spent, budget: b.budget, pct: b.pct })) : autoBudgets.map(b => ({ cat: b.category, spent: b.actual, budget: b.budget, pct: b.pct }))).map((b, i) => {
-                                    const over = b.pct > 100, warn = b.pct > 80;
-                                    return (
-                                        <div key={i} className={`p-3 rounded-xl border ${over ? 'bg-rose-500/5 border-rose-500/20' : warn ? 'bg-amber-500/5 border-amber-500/15' : 'bg-white/[0.015] border-white/5'}`}>
-                                            <div className="flex justify-between text-xs mb-1.5">
-                                                <span className="text-slate-300 font-medium truncate">{b.cat}</span>
-                                                <span className={`font-mono ml-2 shrink-0 ${over ? 'text-rose-400' : warn ? 'text-amber-400' : 'text-slate-500'}`}>{fmt(b.spent)}<span className="text-slate-600">/{fmt(b.budget)}</span></span>
-                                            </div>
-                                            <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                                                <div className={`h-full rounded-full transition-all ${over ? 'bg-rose-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, b.pct)}%` }} />
-                                            </div>
-                                            <p className={`text-[10px] mt-1 ${over ? 'text-rose-400' : warn ? 'text-amber-400' : 'text-slate-600'}`}>
-                                                {over ? `${fmt(b.spent - b.budget)} over` : `${fmt(b.budget - b.spent)} left`}
-                                            </p>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <p className="text-sm text-slate-500 text-center py-6">Click "Edit Budgets" to set monthly targets per category.</p>
-                        )}
-                    </div>
-
-                    {/* ── 9. CASH FLOW CALENDAR — hidden for now ── */}
+                    {/* ── 8. CASH FLOW CALENDAR — hidden for now ── */}
                     {false && (
                     <div className="glass-card p-6">
                         <div className="flex items-center justify-between mb-4">

@@ -15,7 +15,7 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
         },
-        show: false,
+        show: true,
     })
 
     if (app.isPackaged) {
@@ -24,7 +24,14 @@ function createWindow() {
         win.loadURL('http://localhost:5173')
     }
 
-    win.once('ready-to-show', () => win.show())
+    win.webContents.openDevTools({ mode: 'detach' })
+
+    win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        if (level >= 2) console.error('[RENDERER]', message, 'at', sourceId, ':', line);
+    })
+    win.webContents.on('render-process-gone', (event, details) => {
+        console.error('[CRASH]', details);
+    })
 
     win.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url)

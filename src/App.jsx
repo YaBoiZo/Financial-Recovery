@@ -14,7 +14,7 @@ import {
     Wallet, Home, Car, Zap, ShoppingBag, Utensils, Heart, Tv, Bus, Repeat,
     HelpCircle, X, GripVertical, Calendar, Loader2, Bot, User, Info,
     Shield, GraduationCap, Plane, HandHeart, Receipt, Search, ChevronLeft,
-    Filter, Hash, Stethoscope, Building2, Wrench
+    Filter, Hash, Stethoscope, Building2, Wrench, Banknote
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════════
@@ -23,13 +23,12 @@ import {
 
 const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'recovery', label: 'Recovery Plan', icon: Target },
-    { id: 'transactions', label: 'Transactions', icon: FileText },
-    { id: 'debts', label: 'Debts', icon: CreditCard },
-    { id: 'savings', label: 'Savings Plan', icon: PiggyBank },
+    { id: 'myrecovery', label: 'My Recovery', icon: Target },
+    { id: 'finances', label: 'My Finances', icon: Wallet },
+    { id: 'ledger', label: 'Ledger', icon: FileText },
     { id: 'networth', label: 'Net Worth', icon: TrendingUp },
     { id: 'advisor', label: 'AI Advisor', icon: Sparkles },
-    { id: 'doctor', label: 'Spend Check', icon: Stethoscope },
+    { id: 'tax', label: 'Tax & Income', icon: Receipt },
 ];
 
 const CATEGORIES = [
@@ -49,6 +48,7 @@ const CATEGORIES = [
     { name: 'Donations', icon: HandHeart, color: '#d946ef' },
     { name: 'Taxes & Fees', icon: Receipt, color: '#f43f5e' },
     { name: 'Income', icon: DollarSign, color: '#0ecb81' },
+    { name: 'Cash & ATM', icon: Banknote, color: '#84cc16' },
     { name: 'Transfers', icon: ArrowUpRight, color: '#64748b' },
     { name: 'Debt Payments', icon: CreditCard, color: '#e11d48' },
     { name: 'Other', icon: HelpCircle, color: '#94a3b8' },
@@ -56,7 +56,8 @@ const CATEGORIES = [
 
 // ORDER MATTERS: more-specific categories first to avoid false matches
 const CATEGORY_KEYWORDS = {
-    'Transfers': ['tfr-to', 'tfr-fr', 'send e-tfr', 'pts to:', 'ssv to:', 'cash app', 'wire', 'ach', 'atm w/d', 'fx atm w/d', 'atm dep', 'cash withdra', 'moved funds', 'to:td c/c'],
+    'Transfers': ['tfr-to', 'tfr-fr', 'send e-tfr', 'pts to:', 'pts frm:', 'ssv to:', 'ssv frm:', 'cash app', 'wire', 'atm dep', 'moved funds', 'to:td c/c', 'payment - thank you', 'payment thank you', 'online payment', 'payment received'],
+    'Cash & ATM': ['atm w/d', 'fx atm w/d', 'cash withdra', 'cash withdrawal'],
     'Income': ['redpath sugar', 'gc 3384-deposit', 'e-transfer', 'mobile deposit', 'cancel e-tfr', 'deposit', 'payroll', 'salary', 'income', 'direct dep', 'employer', 'refund', 'reimbursement', 'cashback', 'dividend', 'interest earned'],
     'Mortgage': ['td mortgage', 'mortgage', 'mtg pmt', 'home loan', 'first national', 'mcap', 'rbc mortgage', 'bmo mortgage', 'cibc mortgage', 'scotiabank mtg'],
     'Maintenance': ['tscc', 'hoa', 'condo fee', 'condo corp', 'strata fee', 'maintenance fee', 'property management', 'building fee', 'common element'],
@@ -125,8 +126,10 @@ const ADVISOR_CHECKLIST = [
     { id: 'rental',     label: 'Rental Income',          icon: '🏘️', description: 'Income & expenses from rental properties',   accountType: 'rental',     required: false },
 ];
 
-function detectAccountType(fileName) {
+function detectAccountType(fileName, contentSample = '') {
     const f = fileName.toLowerCase();
+    const c = contentSample.toLowerCase().substring(0, 800);
+    // Filename-based (most reliable when present)
     if (/credit|visa|mastercard|\bmc\b|amex|card/.test(f)) return 'credit';
     if (/sav|tfsa|hisa|hfsa|fhsa/.test(f)) return 'savings';
     if (/invest|rrsp|rrif|brokerage|portfolio/.test(f)) return 'investment';
@@ -134,6 +137,11 @@ function detectAccountType(fileName) {
     if (/mortgage|mtg/.test(f)) return 'mortgage';
     if (/vehicle|car.loan|auto.loan|lease/.test(f)) return 'vehicle';
     if (/rental|rent.income/.test(f)) return 'rental';
+    // Content-based fallback (catches cards like "TD FIRST CLASS" whose names aren't obvious)
+    if (/interest charge|cash advance|minimum payment|statement balance|payment due|purchase interest/.test(c)) return 'credit';
+    if (/savings account|ssv frm|pts frm/.test(c)) return 'savings';
+    // Filename patterns: credit card statements typically include a date range or "statement"
+    if (/last statement|since last statement|statement period|\bjun\b|\bjan\b.*\bfeb\b|\bdec\b.*\bjan\b/.test(f)) return 'credit';
     return 'chequing';
 }
 
@@ -177,6 +185,137 @@ const fmtShort = (n) => {
 };
 
 const pct = (n) => (Number(n) || 0).toFixed(1) + '%';
+
+/* ═══════════════════════════════════════════
+   PDF EXTRACTION & DOCUMENT DETECTION
+   ═══════════════════════════════════════════ */
+async function extractPDFText(file) {
+    try {
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = '';
+        for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map(item => item.str).join(' ') + '\n';
+        }
+        return text;
+    } catch(e) { return ''; }
+}
+
+async function extractImageText(file) {
+    try {
+        const { createWorker } = await import('tesseract.js');
+        const worker = await createWorker('eng');
+        const url = URL.createObjectURL(file);
+        const { data: { text } } = await worker.recognize(url);
+        await worker.terminate();
+        URL.revokeObjectURL(url);
+        return text;
+    } catch(e) { return ''; }
+}
+
+function extractFinancialDataFromImage(text) {
+    const lower = text.toLowerCase();
+    // Detect account / debt type
+    let accountType = 'unknown';
+    if (/mortgage|amortization|maturity date|home (loan|equity)|heloc/i.test(text)) accountType = 'mortgage';
+    else if (/student loan|osap|nslsc|education loan|student line/i.test(text)) accountType = 'student_loan';
+    else if (/auto loan|vehicle loan|car (loan|payment)|auto (loan|finance)/i.test(text)) accountType = 'vehicle';
+    else if (/line of credit|\bloc\b|personal loan|heloc|credit line/i.test(text)) accountType = 'loc';
+    else if (/savings|tfsa|hisa|gic|high.interest/i.test(text)) accountType = 'savings';
+    else if (/chequing|checking/i.test(text)) accountType = 'chequing';
+
+    // Extract dollar amounts with surrounding context
+    const amtRe = /([^\n$]{0,50})\$\s*([\d,]+\.?\d{0,2})/g;
+    const amountContexts = [];
+    let m;
+    while ((m = amtRe.exec(text)) !== null) {
+        const val = parseFloat(m[2].replace(/,/g, ''));
+        if (val > 0) amountContexts.push({ context: m[1].toLowerCase(), value: val });
+    }
+
+    // Balance
+    let balance = null;
+    const balCtx = amountContexts.find(a => /balance|outstanding|principal|owing|remaining|amount owed|current/i.test(a.context));
+    if (balCtx) balance = balCtx.value;
+    else if (amountContexts.length > 0) balance = Math.max(...amountContexts.map(a => a.value));
+
+    // Interest rate
+    let interestRate = null;
+    const rateM = text.match(/(?:interest\s*rate|annual\s*rate|apr|rate)[^%\d]{0,20}([\d.]+)\s*%/i)
+        || text.match(/([\d.]+)\s*%\s*(?:per annum|p\.a\.|annual|interest)/i)
+        || text.match(/([\d]+\.\d+)\s*%/);
+    if (rateM) interestRate = parseFloat(rateM[1]);
+
+    // Monthly payment
+    let monthlyPayment = null;
+    const payCtx = amountContexts.find(a => /payment|monthly|regular|minimum|installment|due/i.test(a.context));
+    if (payCtx && (!balance || payCtx.value < balance)) monthlyPayment = payCtx.value;
+
+    // Account name
+    const nameMap = { mortgage: 'Mortgage', student_loan: 'Student Loan', vehicle: 'Vehicle Loan', loc: 'Line of Credit', savings: 'Savings Account', chequing: 'Chequing Account' };
+    let name = nameMap[accountType] || 'Imported Account';
+    // Try to find a cleaner name from the image text
+    const nameM = text.match(/(?:account name|account:|product name)[:\s]+([A-Za-z][A-Za-z\s]{2,35})/i);
+    if (nameM) name = nameM[1].trim();
+
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 2 && l.length < 80);
+    return { accountType, balance, interestRate, monthlyPayment, name, lines: lines.slice(0, 15) };
+}
+
+function detectDocumentType(filename, text) {
+    const fn = filename.toLowerCase();
+    const t = (text || '').toLowerCase().slice(0, 3000);
+    if (/pay.?stub|pay.?slip|gross.?pay|net.?pay|cpp.?deduction|ei.?premium|federal.?tax|provincial.?tax|record.?of.?employment|roe/.test(t) || /paystub|payslip|payroll/.test(fn)) return 'paystub';
+    if (/credit.?card|minimum.?payment|statement.?balance|previous.?balance|cash.?advance|visa|mastercard|american.?express/.test(t) || /credit|visa|amex/.test(fn)) return 'credit_card';
+    if (/mortgage|principal.?balance|amortization|maturity.?date/.test(t) || /mortgage/.test(fn)) return 'mortgage';
+    if (/loan.?balance|personal.?loan|auto.?loan|vehicle.?loan/.test(t) || /loan/.test(fn)) return 'loan';
+    if (/chequing|checking|savings.?account|opening.?balance|closing.?balance|deposits|withdrawals/.test(t) || /statement|chequing|savings/.test(fn)) return 'bank_statement';
+    return 'unknown';
+}
+
+/* ═══════════════════════════════════════════
+   CANADIAN TAX CALCULATOR
+   ═══════════════════════════════════════════ */
+function calculateCanadianTax(grossAnnual, province = 'ON') {
+    if (!grossAnnual || grossAnnual <= 0) return null;
+    // Federal brackets (2025/2026)
+    const fedBrackets = [[0,55867,0.15],[55867,111733,0.205],[111733,154906,0.26],[154906,220000,0.29],[220000,Infinity,0.33]];
+    let federal = 0, rem = grossAnnual;
+    for (const [low,high,rate] of fedBrackets) { if(rem<=0)break; const t=Math.min(rem,high-low); federal+=t*rate; rem-=t; }
+    const federalBPA = Math.min(grossAnnual, 15705) * 0.15;
+    const federalNet = Math.max(0, federal - federalBPA);
+    // Provincial simplified
+    const provBrackets = {
+        ON: [[0,51446,0.0505],[51446,102894,0.0915],[102894,150000,0.1116],[150000,220000,0.1216],[220000,Infinity,0.1316]],
+        BC: [[0,45654,0.0506],[45654,91310,0.077],[91310,104835,0.105],[104835,127299,0.1229],[127299,172602,0.147],[172602,240716,0.168],[240716,Infinity,0.205]],
+        AB: [[0,148269,0.10],[148269,177922,0.12],[177922,237230,0.13],[237230,355845,0.14],[355845,Infinity,0.15]],
+        QC: [[0,51780,0.14],[51780,103545,0.19],[103545,126000,0.24],[126000,Infinity,0.2575]],
+        MB: [[0,47000,0.108],[47000,100000,0.1275],[100000,Infinity,0.174]],
+        SK: [[0,49720,0.105],[49720,142058,0.125],[142058,Infinity,0.145]],
+    };
+    const brackets = provBrackets[province] || provBrackets['ON'];
+    let prov = 0; rem = grossAnnual;
+    for (const [low,high,rate] of brackets) { if(rem<=0)break; const t=Math.min(rem,high-low); prov+=t*rate; rem-=t; }
+    const provBPA = Math.min(grossAnnual, 11865) * (brackets[0][2]);
+    const provNet = Math.max(0, prov - provBPA);
+    // CPP
+    const cpp = Math.min(Math.max(0, grossAnnual - 3500), 65000) * 0.0595;
+    // EI
+    const ei = Math.min(grossAnnual, 63200) * 0.0166;
+    const totalTax = federalNet + provNet + cpp + ei;
+    return {
+        grossAnnual: Math.round(grossAnnual),
+        federal: Math.round(federalNet), provincial: Math.round(provNet),
+        cpp: Math.round(cpp), ei: Math.round(ei),
+        totalTax: Math.round(totalTax),
+        netAnnual: Math.round(grossAnnual - totalTax),
+        effectiveRate: Math.round((totalTax / grossAnnual) * 1000) / 10
+    };
+}
 
 /* ═══════════════════════════════════════════
    ANIMATED NUMBER
@@ -1039,6 +1178,31 @@ export default function App() {
 
     const handleSelectUser = (name) => {
         localStorage.setItem('finrecovery_activeUser', name);
+        const newKey = userLsKey(name);
+        const d = loadFromLS(newKey) || {};
+        // Restore all user-scoped state from the incoming profile's localStorage key
+        setTransactions(d.transactions || []);
+        setAccounts(d.accounts || []);
+        setDebts(d.debts || []);
+        setStartingBalance(d.startingBalance || 0);
+        setAccountBalances(d.accountBalances || {});
+        setCategoryBudgets(d.categoryBudgets || {});
+        setMerchantOverrides(d.merchantOverrides || {});
+        setSavingsGoals(d.savingsGoals || []);
+        setNwAssets(d.nwAssets || []);
+        setTxNotes(d.txNotes || {});
+        setOnboardingDone(d.onboardingDone || false);
+        setDismissedAdvisorItems(new Set(d.dismissedAdvisorItems || []));
+        setChatMessages(d.chatMessages || []);
+        setIsDemoMode(d.isDemoMode || false);
+        setAdvisorReportGenerated(d.advisorReportGenerated || false);
+        // Restore separately-keyed state
+        try { const s = localStorage.getItem(`${newKey}_recov_notes`); setRecoveryNotes(s ? JSON.parse(s) : {}); } catch(e) { setRecoveryNotes({}); }
+        try { const s = localStorage.getItem(`${newKey}_dismissed_debt`); setDismissedDebtPrompts(s ? new Set(JSON.parse(s)) : new Set()); } catch(e) { setDismissedDebtPrompts(new Set()); }
+        try { const s = localStorage.getItem(`${newKey}_tileOrder`); setTileOrder(s ? JSON.parse(s) : ['networth','net','income','spending','debt']); } catch(e) { setTileOrder(['networth','net','income','spending','debt']); }
+        // Reset UI state
+        setActiveTab('dashboard');
+        setCsvError(null);
         setActiveUser(name);
     };
     const handleSwitchUser = () => {
@@ -1056,6 +1220,8 @@ export default function App() {
     const [startingBalance, setStartingBalance] = useState(() => saved.current?.startingBalance || 0);
     const [dragActive, setDragActive] = useState(false);
     const [csvLoading, setCsvLoading] = useState(false);
+    const [csvError, setCsvError] = useState(null);
+    const [importSummary, setImportSummary] = useState(null); // { count, accounts, income, spending }
     const [txAccountFilter, setTxAccountFilter] = useState('All');
     const [isDemoMode, setIsDemoMode] = useState(() => saved.current?.isDemoMode || false);
     const [accountBalances, setAccountBalances] = useState(() => saved.current?.accountBalances || {});
@@ -1093,6 +1259,8 @@ export default function App() {
     const [dashboardPeriod, setDashboardPeriod] = useState('all');
     // Smooth chart hover overlay
     const [chartHoverData, setChartHoverData] = useState(null);
+    const chartContainerRef = useRef(null);
+    const chartOverlayRef = useRef(null);
     // Dashboard tile order (drag-and-drop)
     const [tileOrder, setTileOrder] = useState(() => {
         try { const s = localStorage.getItem(`${currentLsKey}_tileOrder`); return s ? JSON.parse(s) : ['networth','net','income','spending','debt']; } catch(e) { return ['networth','net','income','spending','debt']; }
@@ -1100,6 +1268,14 @@ export default function App() {
     // Pie period filter & drilldown
     const [piePeriod, setPiePeriod] = useState('all');
     const [drillCategory, setDrillCategory] = useState(null);
+    // Recovery Plan accordion
+    const [expandedStep, setExpandedStep] = useState(null);
+    // My Recovery sub-tab
+    const [recoverySubTab, setRecoverySubTab] = useState('overview');
+    const [debtCelebration, setDebtCelebration] = useState(null); // { name, amount }
+    const [recoveryNotes, setRecoveryNotes] = useState(() => {
+        try { const s = localStorage.getItem(`${currentLsKey}_recov_notes`); return s ? JSON.parse(s) : {}; } catch(e) { return {}; }
+    });
     // DnD sensors for tile reordering
     const tileSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
     // Cash flow calendar display month
@@ -1131,19 +1307,93 @@ export default function App() {
     // CSV trust modal — staged files waiting for user to confirm source
     const [pendingUpload, setPendingUpload] = useState(null); // { files: File[], forcedType?: string } | null
     // Debt tab ghost prompts — dismissed items
-    const [dismissedDebtPrompts, setDismissedDebtPrompts] = useState(() => new Set());
+    const [dismissedDebtPrompts, setDismissedDebtPrompts] = useState(() => {
+        try { const s = localStorage.getItem(`${currentLsKey}_dismissed_debt`); return s ? new Set(JSON.parse(s)) : new Set(); } catch(e) { return new Set(); }
+    });
     // Advisor checklist — items user has explicitly marked as "I don't have this"
     const [dismissedAdvisorItems, setDismissedAdvisorItems] = useState(() => new Set(saved.current?.dismissedAdvisorItems || []));
+    // Ollama connection status (null=unknown, true=connected, false=offline/local)
+    const [ollamaOnline, setOllamaOnline] = useState(null);
+    const [showOllamaGuide, setShowOllamaGuide] = useState(false);
+    // PDF export in progress
+    const [pdfExporting, setPdfExporting] = useState(false);
+    // File type detection modal
+    const [fileTypeModal, setFileTypeModal] = useState(null); // { file, text, filename, resolve }
+    const [unsupportedFileMsg, setUnsupportedFileMsg] = useState(null);
+    // Income profile
+    const [incomeProfile, setIncomeProfile] = useState(() => saved.current?.incomeProfile || { type: 'salary', grossAmount: '', payFrequency: 'biweekly', province: 'ON', rrspMonthly: '', pensionMonthly: '', benefitsMonthly: '', otherMonthly: '', notes: '' });
+    const [showIncomeModal, setShowIncomeModal] = useState(false);
+    // Hourly rate hours/week (separate from incomeProfile to avoid mixing)
+    const [incomeHoursPerWeek, setIncomeHoursPerWeek] = useState(() => saved.current?.incomeHoursPerWeek || '');
+    // Weekly focus — did user mark this week's ONE THING as done?
+    const [weeklyFocusDone, setWeeklyFocusDone] = useState(() => {
+        try {
+            const s = localStorage.getItem(`${userLsKey(localStorage.getItem('finrecovery_activeUser'))}_wfDone`);
+            if (!s) return false;
+            const { done, week } = JSON.parse(s);
+            return done && week === Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+        } catch(e) { return false; }
+    });
+
+    // ── Net Worth — expanded asset groups ──
+    const [expandedNwGroups, setExpandedNwGroups] = useState(new Set());
+
+    // ── Image account import modal ──
+    const [imageAccountModal, setImageAccountModal] = useState(null); // { filename, accountType, balance, interestRate, monthlyPayment, name, lines }
+    const [imageAccountForm, setImageAccountForm] = useState({ name: '', type: 'mortgage', balance: '', interestRate: '', monthlyPayment: '' });
+    // ── Same-card merge prompt ──
+    const [sameCardPrompt, setSameCardPrompt] = useState(null); // { groups: [[acc,...]], resolve: fn }
+    // ── Finances sub-tab ──
+    const [financesSubTab, setFinancesSubTab] = useState('accounts');
+    // ── Extra payment scenario calculator ──
+    const [extraPaymentInput, setExtraPaymentInput] = useState('');
+    // ── Weekly check-in (Recovery tab) ──
+    const [weeklyCheckin, setWeeklyCheckin] = useState(() => {
+        try { const s = localStorage.getItem(`${currentLsKey}_weekly_checkin`); return s ? JSON.parse(s) : {}; } catch(e) { return {}; }
+    });
+    const [weeklyCheckinForm, setWeeklyCheckinForm] = useState({ confidence: 0, blocker: '', win: '' });
+    const [showWeeklyCheckin, setShowWeeklyCheckin] = useState(false);
+    // ── RRSP interactive calculator ──
+    const [rrspContribution, setRrspContribution] = useState('');
+    // ── Tax prep checklist (persisted) ──
+    const [taxChecklist, setTaxChecklist] = useState(() => {
+        try { const s = localStorage.getItem(`${currentLsKey}_taxChecklist`); return s ? new Set(JSON.parse(s)) : new Set(); } catch(e) { return new Set(); }
+    });
 
     // ── Persist to localStorage on change ──
     useEffect(() => {
-        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems] }, currentLsKey);
-    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems, currentLsKey]);
+        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems], incomeProfile, incomeHoursPerWeek }, currentLsKey);
+    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems, incomeProfile, incomeHoursPerWeek, currentLsKey]);
 
     // Persist tile order
     useEffect(() => {
         try { localStorage.setItem(`${currentLsKey}_tileOrder`, JSON.stringify(tileOrder)); } catch(e) {}
     }, [tileOrder, currentLsKey]);
+
+    // Persist recovery notes
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_recov_notes`, JSON.stringify(recoveryNotes)); } catch(e) {}
+    }, [recoveryNotes, currentLsKey]);
+
+    // Persist dismissed debt prompts
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_dismissed_debt`, JSON.stringify([...dismissedDebtPrompts])); } catch(e) {}
+    }, [dismissedDebtPrompts, currentLsKey]);
+
+    // Persist tax checklist
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_taxChecklist`, JSON.stringify([...taxChecklist])); } catch(e) {}
+    }, [taxChecklist, currentLsKey]);
+
+    // Persist weekly check-in
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_weekly_checkin`, JSON.stringify(weeklyCheckin)); } catch(e) {}
+    }, [weeklyCheckin, currentLsKey]);
+
+    // Persist weekly focus done state
+    useEffect(() => {
+        try { localStorage.setItem(`${currentLsKey}_wfDone`, JSON.stringify({ done: weeklyFocusDone, week: Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000)) })); } catch(e) {}
+    }, [weeklyFocusDone, currentLsKey]);
 
     // ── Re-categorize stored transactions when keyword rules change ──
     // Runs once on mount. Respects manual merchantOverrides.
@@ -1178,36 +1428,51 @@ export default function App() {
             const reader = new FileReader();
             reader.onload = (evt) => {
                 const text = evt.target.result;
+                const detectedAccountType = detectAccountType(file.name, text.substring(0, 800));
                 const firstLine = text.split('\n')[0];
-                const isHeaderless = /^"\d{4}-\d{2}-\d{2}"/.test(firstLine.trim()) || /^\d{4}-\d{2}-\d{2}/.test(firstLine.trim());
+                const isHeaderless = /^"?\d{4}-\d{2}-\d{2}/.test(firstLine.trim()) || /^"?\d{1,2}\/\d{1,2}\/\d{4}/.test(firstLine.trim());
+                // Normalize MM/DD/YYYY or M/D/YYYY → YYYY-MM-DD for consistent sorting
+                const normalizeDate = (raw) => {
+                    const s = raw.replace(/"/g, '').trim();
+                    const mdyMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+                    if (mdyMatch) {
+                        const [, m, d, y] = mdyMatch;
+                        return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+                    }
+                    return s;
+                };
                 Papa.parse(text, {
                     header: !isHeaderless,
                     skipEmptyLines: true,
                     dynamicTyping: false,
                     complete: (results) => {
                         let rows;
+                        let currentBalance = 0;
                         if (isHeaderless) {
-                            const firstRow = results.data[0];
-                            if (firstRow) {
-                                const firstFields = Array.isArray(firstRow) ? firstRow : Object.values(firstRow);
-                                const firstDebit = parseFloat((firstFields[2] || '').toString().replace(/[$,"]/g, '')) || 0;
-                                const firstCredit = parseFloat((firstFields[3] || '').toString().replace(/[$,"]/g, '')) || 0;
-                                const firstBal = parseFloat((firstFields[4] || '').toString().replace(/[$,"]/g, '')) || 0;
-                                const firstAmt = firstCredit > 0 ? firstCredit : -firstDebit;
-                                setStartingBalance(firstBal - firstAmt);
-                            }
-                            rows = results.data.map((arr, i) => {
+                            // Parse all raw rows first (keep balance col for starting-balance / current-balance calc)
+                            const rawRows = results.data.map((arr, i) => {
                                 const fields = Array.isArray(arr) ? arr : Object.values(arr);
-                                const dateVal = (fields[0] || '').toString().replace(/"/g, '').trim();
+                                const dateVal = normalizeDate((fields[0] || '').toString());
                                 const descVal = (fields[1] || '').toString().replace(/"/g, '').trim();
-                                const debitStr = (fields[2] || '').toString().replace(/[$,"]/g, '').trim();
-                                const creditStr = (fields[3] || '').toString().replace(/[$,"]/g, '').trim();
-                                const debit = parseFloat(debitStr) || 0;
-                                const credit = parseFloat(creditStr) || 0;
+                                const debit = parseFloat((fields[2] || '').toString().replace(/[$,"]/g, '')) || 0;
+                                const credit = parseFloat((fields[3] || '').toString().replace(/[$,"]/g, '')) || 0;
+                                const balance = parseFloat((fields[4] || '').toString().replace(/[$,"]/g, '')) || 0;
                                 const amount = credit > 0 ? credit : -debit;
-                                if (!dateVal || amount === 0) return null;
-                                return { id: `csv-${accountId}-${i}`, date: dateVal, description: descVal, amount, category: merchantOverrides[normalizeForOverride(descVal)] || categorize(descVal), accountId };
-                            }).filter(Boolean);
+                                return { i, dateVal, descVal, amount, balance };
+                            }).filter(r => r.dateVal && r.amount !== 0);
+
+                            if (rawRows.length > 0) {
+                                const sortedRaw = [...rawRows].sort((a, b) => a.dateVal.localeCompare(b.dateVal));
+                                // Use OLDEST row for starting balance
+                                setStartingBalance(sortedRaw[0].balance - sortedRaw[0].amount);
+                                // Use NEWEST row's balance as current account balance
+                                currentBalance = sortedRaw[sortedRaw.length - 1].balance;
+                            }
+
+                            // Build final rows sorted date ascending
+                            rows = rawRows
+                                .map(r => ({ id: `csv-${accountId}-${r.i}`, date: r.dateVal, description: r.descVal, amount: r.amount, category: merchantOverrides[normalizeForOverride(r.descVal)] || categorize(r.descVal), accountId }))
+                                .sort((a, b) => a.date.localeCompare(b.date));
                         } else {
                             rows = results.data.map((row, i) => {
                                 const keys = Object.keys(row);
@@ -1222,21 +1487,109 @@ export default function App() {
                                 const typeVal = (row[typeCols[0]] || '').toString().toLowerCase();
                                 if (typeVal === 'credit' && amtVal < 0) amtVal = Math.abs(amtVal);
                                 if (typeVal === 'debit' && amtVal > 0) amtVal = -amtVal;
-                                return { id: `csv-${accountId}-${i}`, date: String(dateVal), description: String(descVal), amount: amtVal, category: merchantOverrides[normalizeForOverride(String(descVal))] || categorize(String(descVal)), accountId };
-                            });
+                                return { id: `csv-${accountId}-${i}`, date: normalizeDate(String(dateVal)), description: String(descVal), amount: amtVal, category: merchantOverrides[normalizeForOverride(String(descVal))] || categorize(String(descVal)), accountId };
+                            }).sort((a, b) => a.date.localeCompare(b.date));
                         }
-                        resolve(rows.filter(r => r.date && r.amount !== 0));
+                        const filteredRows = rows.filter(r => r.date && r.amount !== 0);
+                        resolve({ rows: filteredRows, currentBalance, detectedAccountType });
                     },
-                    error: () => resolve([]),
+                    error: () => resolve({ rows: [], currentBalance: 0, detectedAccountType: 'chequing' }),
                 });
             };
-            reader.onerror = () => resolve([]);
+            reader.onerror = () => resolve({ rows: [], currentBalance: 0, detectedAccountType: 'chequing' });
             reader.readAsText(file);
         });
     }, [merchantOverrides]);
 
     const handleFiles = useCallback(async (fileList, trustedBank = false, forcedAccountType = null) => {
-        const files = Array.from(fileList || []).filter(f => f.name.toLowerCase().endsWith('.csv'));
+        const allFiles = Array.from(fileList || []);
+
+        // Handle non-CSV files first
+        for (const f of allFiles) {
+            const ext = f.name.split('.').pop().toLowerCase();
+            if (['jpg','jpeg','png'].includes(ext)) {
+                setCsvLoading(true);
+                setUnsupportedFileMsg(`Reading "${f.name}" — this may take a few seconds…`);
+                const imgText = await extractImageText(f);
+                setUnsupportedFileMsg(null);
+                setCsvLoading(false);
+                if (!imgText.trim()) {
+                    setCsvError(`Could not read any text from "${f.name}". Try a clearer/higher-res image.`);
+                    continue;
+                }
+                // Extract structured financial data from OCR text
+                const extracted = extractFinancialDataFromImage(imgText);
+                // Show the confirmation modal — user reviews/edits then confirms
+                await new Promise((resolve) => {
+                    setImageAccountModal({ filename: f.name, ...extracted, resolve });
+                    setImageAccountForm({
+                        name: extracted.name || '',
+                        type: extracted.accountType === 'unknown' ? 'mortgage' : extracted.accountType,
+                        balance: extracted.balance != null ? String(extracted.balance) : '',
+                        interestRate: extracted.interestRate != null ? String(extracted.interestRate) : '',
+                        monthlyPayment: extracted.monthlyPayment != null ? String(extracted.monthlyPayment) : '',
+                    });
+                });
+                continue;
+            }
+            if (ext === 'pdf') {
+                setCsvLoading(true);
+                const pdfText = await extractPDFText(f);
+                const docType = detectDocumentType(f.name, pdfText);
+                setCsvLoading(false);
+                if (docType === 'paystub') {
+                    setCsvError(`Pay stub detected: "${f.name}". Pay stub data can be entered manually in the Tax & Income tab to set up your income profile.`);
+                } else if (docType === 'bank_statement' || docType === 'credit_card') {
+                    // Try to use extracted text as CSV
+                    const csvBlob = new File([pdfText], f.name.replace(/\.pdf$/i, '.csv'), { type: 'text/csv' });
+                    const fakeList = [csvBlob];
+                    // recurse with just this file as CSV
+                    const files2 = [csvBlob];
+                    setCsvLoading(true);
+                    const accId = `acc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                    const newAcc = { id: accId, fileName: f.name, accountName: guessAccountName(f.name), accountType: forcedAccountType || detectAccountType(f.name) };
+                    const { rows, currentBalance: cbPdf } = await parseOneFile(csvBlob, accId);
+                    setCsvLoading(false);
+                    if (rows.length > 0) {
+                        setTransactions(prev => [...prev, ...rows]);
+                        setAccounts(prev => [...prev, newAcc]);
+                        if (cbPdf) setAccountBalances(prev => ({ ...prev, [accId]: cbPdf }));
+                        setImportSummary({ count: rows.length, accounts: [newAcc.accountName], income: rows.filter(r=>r.amount>0).reduce((s,r)=>s+r.amount,0), spending: rows.filter(r=>r.amount<0).reduce((s,r)=>s+Math.abs(r.amount),0) });
+                    } else {
+                        setCsvError(`PDF "${f.name}" was detected as a ${docType === 'credit_card' ? 'credit card' : 'bank'} statement but no tabular data could be extracted. Please download the CSV version from your bank's website instead.`);
+                    }
+                } else if (docType === 'mortgage' || docType === 'loan') {
+                    setCsvError(`${docType === 'mortgage' ? 'Mortgage' : 'Loan'} statement detected: "${f.name}". To track this debt, go to the Debts tab and add it manually with your current balance and interest rate.`);
+                } else {
+                    // unknown — show modal
+                    const resolvedType = await new Promise((resolve) => {
+                        setFileTypeModal({ file: f, text: pdfText, filename: f.name, resolve });
+                    });
+                    if (resolvedType === 'paystub') {
+                        setCsvError(`Pay stub noted. Visit the Tax & Income tab to set up your income profile manually.`);
+                    } else if (resolvedType === 'bank_statement' || resolvedType === 'credit_card') {
+                        const csvBlob2 = new File([pdfText], f.name.replace(/\.pdf$/i, '.csv'), { type: 'text/csv' });
+                        const accId2 = `acc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                        const newAcc2 = { id: accId2, fileName: f.name, accountName: guessAccountName(f.name), accountType: resolvedType === 'credit_card' ? 'credit' : 'chequing' };
+                        setCsvLoading(true);
+                        const { rows: rows2, currentBalance: cbPdf2 } = await parseOneFile(csvBlob2, accId2);
+                        setCsvLoading(false);
+                        if (rows2.length > 0) {
+                            setTransactions(prev => [...prev, ...rows2]);
+                            setAccounts(prev => [...prev, newAcc2]);
+                            if (cbPdf2) setAccountBalances(prev => ({ ...prev, [accId2]: cbPdf2 }));
+                            setImportSummary({ count: rows2.length, accounts: [newAcc2.accountName], income: rows2.filter(r=>r.amount>0).reduce((s,r)=>s+r.amount,0), spending: rows2.filter(r=>r.amount<0).reduce((s,r)=>s+Math.abs(r.amount),0) });
+                        } else {
+                            setCsvError(`Could not extract transactions from PDF "${f.name}". Please download the CSV version from your bank instead.`);
+                        }
+                    } else if (resolvedType === 'loan') {
+                        setCsvError(`Debt statement noted. Visit the Debts tab to add your loan/mortgage manually.`);
+                    }
+                }
+            }
+        }
+
+        const files = allFiles.filter(f => { const ext = f.name.split('.').pop().toLowerCase(); return ext === 'csv' || ext === 'txt'; });
         if (!files.length) return;
         setCsvLoading(true);
         const newAccounts = files.map(f => ({
@@ -1246,7 +1599,23 @@ export default function App() {
             accountType: forcedAccountType || detectAccountType(f.name),
         }));
         const parsedBatches = await Promise.all(files.map((f, i) => parseOneFile(f, newAccounts[i].id)));
-        const allNewRows = parsedBatches.flat();
+        // Auto-populate account balances and correct account types from CSV content
+        parsedBatches.forEach(({ currentBalance, detectedAccountType }, i) => {
+            if (currentBalance) setAccountBalances(prev => ({ ...prev, [newAccounts[i].id]: currentBalance }));
+            if (!forcedAccountType && detectedAccountType) newAccounts[i].accountType = detectedAccountType;
+        });
+        const allNewRows = parsedBatches.flatMap(b => b.rows);
+
+        if (allNewRows.length === 0) {
+            setCsvError(`We couldn't read ${files.length === 1 ? `"${files[0].name}"` : `these ${files.length} files`}. Make sure you're uploading a CSV exported directly from your bank — not a PDF, statement image, or formatted report. Common fix: log into your bank's website → Accounts → Download Transactions → CSV.`);
+            setCsvLoading(false);
+            return;
+        }
+        setCsvError(null);
+        const importIncome = allNewRows.filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0);
+        const importSpending = allNewRows.filter(r => r.amount < 0).reduce((s, r) => s + Math.abs(r.amount), 0);
+        setImportSummary({ count: allNewRows.length, accounts: newAccounts.map(a => a.accountName), income: importIncome, spending: importSpending });
+
         setTransactions(prev => {
             if (trustedBank) {
                 // Bank exports are authoritative — import every single row, no dedup.
@@ -1268,6 +1637,50 @@ export default function App() {
             return [...prev, ...toAdd];
         });
         setAccounts(prev => [...prev, ...newAccounts]);
+
+        // ── Same-card detection: ask user to merge credit accounts with similar names ──
+        const newCreditAccs = newAccounts.filter(a => a.accountType === 'credit');
+        if (newCreditAccs.length > 1) {
+            const groups = {};
+            newCreditAccs.forEach(acc => {
+                const key = acc.accountName.replace(/[^a-zA-Z]/g, '').substring(0, 10).toLowerCase();
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(acc);
+            });
+            const multiGroups = Object.values(groups).filter(g => g.length > 1);
+            if (multiGroups.length > 0) {
+                const shouldMerge = await new Promise(res => setSameCardPrompt({ groups: multiGroups, resolve: res }));
+                setSameCardPrompt(null);
+                if (shouldMerge) {
+                    let updatedRows = [...allNewRows];
+                    const toDeleteIds = new Set();
+                    const balanceUpdates = {};
+                    multiGroups.forEach(group => {
+                        const withLatest = group.map(acc => {
+                            const txs = updatedRows.filter(r => r.accountId === acc.id);
+                            const latest = txs.length > 0 ? txs.map(t => t.date).sort().pop() : '';
+                            return { acc, latest };
+                        }).sort((a, b) => b.latest.localeCompare(a.latest));
+                        const primary = withLatest[0].acc;
+                        const secondary = withLatest.slice(1).map(w => w.acc.id);
+                        secondary.forEach(sid => {
+                            updatedRows.forEach(r => { if (r.accountId === sid) r.accountId = primary.id; });
+                            toDeleteIds.add(sid);
+                        });
+                        // Use the balance of the account with the most recent transactions
+                        const bals = group.map(a => Number(accountBalances[a.id]) || 0);
+                        balanceUpdates[primary.id] = Math.max(...bals);
+                    });
+                    setTransactions(prev => {
+                        const kept = prev.filter(r => !updatedRows.some(nr => nr.id === r.id));
+                        return [...kept, ...updatedRows];
+                    });
+                    setAccounts(prev => prev.filter(a => !toDeleteIds.has(a.id)));
+                    if (Object.keys(balanceUpdates).length > 0) setAccountBalances(prev => ({ ...prev, ...balanceUpdates }));
+                }
+            }
+        }
+
         setCsvLoading(false);
     }, [parseOneFile]);
 
@@ -1300,9 +1713,12 @@ export default function App() {
 
     const onDrop = useCallback((e) => {
         e.preventDefault(); setDragActive(false);
-        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.name.toLowerCase().endsWith('.csv'));
-        if (files.length) setPendingUpload({ files });
-    }, []);
+        const allDropped = Array.from(e.dataTransfer?.files || []);
+        const csvTxt = allDropped.filter(f => /\.(csv|txt)$/i.test(f.name));
+        const others = allDropped.filter(f => /\.(pdf|jpg|jpeg|png)$/i.test(f.name));
+        if (csvTxt.length) setPendingUpload({ files: csvTxt });
+        if (others.length) handleFiles(others, false, null);
+    }, [handleFiles]);
 
     const onDragOver = useCallback((e) => { e.preventDefault(); setDragActive(true); }, []);
     const onDragLeave = useCallback(() => setDragActive(false), []);
@@ -1351,7 +1767,7 @@ export default function App() {
     // Auto-detect cross-account transfers (same amount ±$0.02, within 3 days, different accounts)
     const transferTxIds = useMemo(() => {
         if (accounts.length < 2) return new Set();
-        const TRANSFER_RE = /transfer|trsf|xfer|\btfr\b|\btrf\b|e-transfer|etransfer|interac|from chq|to chq|from sav|to sav|payment from|sent to|received from/i;
+        const TRANSFER_RE = /transfer|trsf|xfer|\btfr\b|\btrf\b|e-transfer|etransfer|from chq|to chq|from sav|to sav|sent to|received from/i;
         const result = new Set();
         const debitsAll = transactions.filter(t => t.amount < 0);
         const creditsAll = transactions.filter(t => t.amount > 0);
@@ -1378,17 +1794,21 @@ export default function App() {
     }, [transactions, accounts]);
 
     const summary = useMemo(() => {
-        const nonTransfer = dashboardTx.filter(t => t.category !== 'Transfers' && !transferTxIds.has(t.id));
+        const liveIsTransfer = (t) => {
+            const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
+            return cat === 'Transfers';
+        };
+        const nonTransfer = dashboardTx.filter(t => !liveIsTransfer(t) && !transferTxIds.has(t.id));
         const income = nonTransfer.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
         const spending = nonTransfer.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-        const transferVol = dashboardTx.filter(t => t.category === 'Transfers' || transferTxIds.has(t.id)).reduce((s, t) => s + Math.abs(t.amount), 0);
+        const transferVol = dashboardTx.filter(t => liveIsTransfer(t) || transferTxIds.has(t.id)).reduce((s, t) => s + Math.abs(t.amount), 0);
         const m = dashboardRange.months;
         return {
             income, spending, net: income - spending, transferVol,
             monthlyIncome: income / m, monthlySpending: spending / m, monthlyNet: (income - spending) / m,
             months: m, monthsOfData: m,
         };
-    }, [dashboardTx, dashboardRange, transferTxIds]);
+    }, [dashboardTx, dashboardRange, transferTxIds, merchantOverrides]);
 
     const totalDebtBalance = useMemo(() => debts.reduce((s, d) => s + (Number(d.amount) || 0), 0), [debts]);
     const totalDebtPayments = useMemo(() => debts.reduce((s, d) => s + (Number(d.monthlyPayment) || 0), 0), [debts]);
@@ -1465,7 +1885,10 @@ export default function App() {
 
     const monthlyData = useMemo(() => {
         const map = {};
-        transactions.filter(t => t.category !== 'Transfers').forEach(t => {
+        transactions.filter(t => {
+            const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
+            return cat !== 'Transfers' && !transferTxIds.has(t.id);
+        }).forEach(t => {
             const d = new Date(t.date);
             if (isNaN(d)) return;
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -1474,7 +1897,22 @@ export default function App() {
             else map[key].expenses += Math.abs(t.amount);
         });
         return Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
-    }, [transactions]);
+    }, [transactions, transferTxIds, merchantOverrides]);
+
+    // ── Net Worth Monthly Trend ──
+    // Walk backwards from current NW, subtracting each month's net to approximate past NW
+    const nwTrend = useMemo(() => {
+        if (monthlyData.length < 2) return [];
+        const sorted = [...monthlyData].sort((a, b) => a.month.localeCompare(b.month));
+        let nw = netWorth.total;
+        const points = [];
+        for (let i = sorted.length - 1; i >= 0; i--) {
+            const net = sorted[i].income - sorted[i].expenses;
+            points.unshift({ label: sorted[i].month.slice(5) + '/' + sorted[i].month.slice(2, 4), nw: Math.round(nw) });
+            nw -= net;
+        }
+        return points;
+    }, [monthlyData, netWorth.total]);
 
     const balanceTrend = useMemo(() => {
         let running = startingBalance;
@@ -1716,6 +2154,108 @@ export default function App() {
         recurringPayments.forEach(rp => rp.txIds?.forEach(id => keys.add(id)));
         return keys;
     }, [recurringPayments]);
+
+    // ── Suspicious Transaction Flags ──
+    const suspiciousFlags = useMemo(() => {
+        const flags = new Map(); // id → { reason, severity }
+        const spending = transactions.filter(t => t.amount < 0 && t.category !== 'Transfers' && !transferTxIds.has(t.id));
+
+        // Helper: normalize merchant key (first 28 chars, lowercase, strip trailing numbers/noise)
+        const merchantKey = (desc) => desc.trim().toLowerCase().replace(/\s+#?\d+$/, '').replace(/\s{2,}/g, ' ').slice(0, 28);
+
+        // 1. Exact same-day duplicates: same description + amount + accountId, same day
+        const dayDupSeen = new Map();
+        [...transactions].sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
+            const key = `${merchantKey(t.description)}|${t.amount}|${t.accountId}|${t.date}`;
+            const existing = dayDupSeen.get(key);
+            if (existing) {
+                flags.set(t.id, { reason: 'Same-day duplicate', severity: 'warn' });
+                flags.set(existing.id, { reason: 'Same-day duplicate', severity: 'warn' });
+            } else {
+                dayDupSeen.set(key, t);
+            }
+        });
+
+        // 2. Near-duplicates: same merchant + same amount, within 3 days, different dates
+        const sorted = [...spending].sort((a, b) => a.date.localeCompare(b.date));
+        for (let i = 0; i < sorted.length; i++) {
+            for (let j = i + 1; j < sorted.length; j++) {
+                const a = sorted[i], b = sorted[j];
+                const dayDiff = (new Date(b.date) - new Date(a.date)) / 86400000;
+                if (dayDiff > 3) break;
+                if (dayDiff === 0) continue; // handled by rule 1
+                if (Math.abs(a.amount - b.amount) < 0.02 && merchantKey(a.description) === merchantKey(b.description) && a.accountId === b.accountId) {
+                    if (!flags.has(a.id)) flags.set(a.id, { reason: 'Possible duplicate (within 3 days)', severity: 'warn' });
+                    if (!flags.has(b.id)) flags.set(b.id, { reason: 'Possible duplicate (within 3 days)', severity: 'warn' });
+                }
+            }
+        }
+
+        // 3. Merchant appearing more times per month than its historical norm
+        // Build: merchantKey → { monthKey → [txs] }
+        const merchantMonths = {};
+        spending.forEach(t => {
+            const mk = merchantKey(t.description);
+            const month = t.date.slice(0, 7);
+            if (!merchantMonths[mk]) merchantMonths[mk] = {};
+            if (!merchantMonths[mk][month]) merchantMonths[mk][month] = [];
+            merchantMonths[mk][month].push(t);
+        });
+        Object.entries(merchantMonths).forEach(([mk, months]) => {
+            const monthCounts = Object.values(months).map(txs => txs.length);
+            if (monthCounts.length < 2) return; // need history
+            const avgPerMonth = monthCounts.reduce((s, v) => s + v, 0) / monthCounts.length;
+            // Flag months where count is 2× the average AND average is < 3 (not a daily coffee shop)
+            if (avgPerMonth >= 3) return; // expected high-freq merchant
+            Object.values(months).forEach(txs => {
+                if (txs.length >= Math.max(2, Math.ceil(avgPerMonth * 2.5))) {
+                    txs.forEach(t => {
+                        if (!flags.has(t.id)) flags.set(t.id, { reason: `Appears ${txs.length}× this month (avg ${avgPerMonth.toFixed(1)}×/mo)`, severity: 'warn' });
+                    });
+                }
+            });
+        });
+
+        // 4. A merchant that ONLY appears in one month (never before/after) with 3+ hits — looks like a fraud burst
+        Object.entries(merchantMonths).forEach(([mk, months]) => {
+            const allMonthKeys = Object.keys(months);
+            if (allMonthKeys.length === 1) {
+                const txs = Object.values(months)[0];
+                if (txs.length >= 3 && !txs.every(t => recurringPayments.some(rp => rp.txIds?.has ? rp.txIds.has(t.id) : rp.txIds?.includes?.(t.id)))) {
+                    txs.forEach(t => {
+                        if (!flags.has(t.id)) flags.set(t.id, { reason: `${txs.length} charges, only in one month`, severity: 'warn' });
+                    });
+                }
+            }
+        });
+
+        // 5. Large cash/ATM withdrawals > $200 round number
+        transactions.forEach(t => {
+            if (t.amount < -200 && Math.abs(t.amount) % 50 === 0) {
+                const d = t.description.toLowerCase();
+                if (d.includes('atm') || d.includes('cash') || d.includes('withdrawal') || d.includes('withdra')) {
+                    if (!flags.has(t.id)) flags.set(t.id, { reason: 'Large cash withdrawal', severity: 'info' });
+                }
+            }
+        });
+
+        // 6. Unusually large single transaction (> 4× the per-transaction avg for that category)
+        const catAmounts = {};
+        spending.forEach(t => {
+            if (!catAmounts[t.category]) catAmounts[t.category] = [];
+            catAmounts[t.category].push(Math.abs(t.amount));
+        });
+        spending.forEach(t => {
+            const arr = catAmounts[t.category];
+            if (!arr || arr.length < 3) return;
+            const avg = arr.reduce((s, v) => s + v, 0) / arr.length;
+            if (Math.abs(t.amount) > avg * 4 && Math.abs(t.amount) > 80) {
+                if (!flags.has(t.id)) flags.set(t.id, { reason: `Unusually large for ${t.category}`, severity: 'info' });
+            }
+        });
+
+        return flags;
+    }, [transactions, transferTxIds, recurringPayments]);
 
     // ── Cash Flow Calendar ──
     const calendarData = useMemo(() => {
@@ -1975,8 +2515,8 @@ export default function App() {
     // ── SAVINGS CALCULATIONS (v2: uses monthly averages) ──
     const savingsData = useMemo(() => {
         const monthlyIncome = summary.monthlyIncome || 0;
-        const monthlyExpenses = summary.monthlySpending + totalDebtPayments;
-        const canSave = Math.max(0, monthlyIncome - monthlyExpenses);
+        const monthlyExpenses = summary.monthlySpending;
+        const canSave = Math.max(0, summary.monthlyNet);
         const emergencyTarget3 = summary.monthlySpending * 3;
         const emergencyTarget6 = summary.monthlySpending * 6;
         const monthsTo3 = canSave > 0 ? Math.ceil(emergencyTarget3 / canSave) : Infinity;
@@ -2155,8 +2695,8 @@ export default function App() {
                 priority: 'critical',
                 title: 'Close your monthly gap',
                 desc: `You're spending ${fmt(Math.abs(summary.monthlyNet))}/mo more than you earn. Find cuts in your top spending category first.`,
-                action: 'View Spend Check',
-                tab: 'doctor',
+                action: 'View Diagnostics',
+                tab: 'myrecovery',
             });
         }
         // Priority 1 (or 2): Attack highest-rate debt
@@ -2177,8 +2717,8 @@ export default function App() {
                 priority: 'medium',
                 title: 'Automate your savings',
                 desc: `You can save ${fmt(savingsData.canSave)}/mo. Set up an automatic transfer on payday — even ${fmt(Math.max(50, savingsData.canSave * 0.5))}/mo builds to ${fmt(Math.max(50, savingsData.canSave * 0.5) * 12)} in a year.`,
-                action: 'View Savings Plan',
-                tab: 'savings',
+                action: 'View Goals',
+                tab: 'myrecovery',
             });
         }
         // Top spend cut
@@ -2226,7 +2766,25 @@ export default function App() {
                         return { name: g.name, fasterBy: baseMo - newMo };
                     }).filter(Boolean)
                     : [];
-                return { category: c.name, monthly: c.monthly, freed: Math.round(freed * 100) / 100, monthsFaster };
+                const moPayoffFn = (bal, pmt, r) => {
+                    if (pmt <= 0) return 999;
+                    if (r <= 0) return Math.ceil(bal / pmt);
+                    if (pmt <= bal * r) return 999;
+                    return Math.ceil(-Math.log(1 - (r * bal / pmt)) / Math.log(1 + r));
+                };
+                const debtFaster = debts
+                    .filter(d => Number(d.amount) > 0 && Number(d.monthlyPayment) > 0)
+                    .slice(0, 3)
+                    .map(d => {
+                        const bal = Number(d.amount);
+                        const pmt = Number(d.monthlyPayment);
+                        const r = (Number(d.interestRate) || 0) / 100 / 12;
+                        const current = moPayoffFn(bal, pmt, r);
+                        const withExtra = moPayoffFn(bal, pmt + freed, r);
+                        const fasterBy = current < 999 && withExtra < 999 ? current - withExtra : 0;
+                        return fasterBy > 0 ? { name: d.name, fasterBy } : null;
+                    }).filter(Boolean);
+                return { category: c.name, monthly: c.monthly, freed: Math.round(freed * 100) / 100, monthsFaster, debtFaster };
             });
     }, [categoryData, savingsGoals, savingsData]);
 
@@ -2304,36 +2862,128 @@ export default function App() {
         return w.slice(0, 4);
     }, [transactions, summary, healthScore, categoryTrends, totalDebtBalance, debts, savingsGoals, totalDebtPayments]);
 
+    // ── WEEKLY FOCUS (top 1 priority action — upgraded with steps + time) ──
+    const weeklyFocus = useMemo(() => {
+        if (transactions.length === 0) return null;
+        const highRateDebt = debts.filter(d => Number(d.interestRate) >= 8).sort((a, b) => Number(b.interestRate) - Number(a.interestRate))[0];
+        const topSpend = [...categoryData].sort((a, b) => b.monthly - a.monthly).find(c => ['Food & Dining','Shopping','Entertainment','Subscriptions'].includes(c.name));
+        const extraAmt = fmt(Math.max(50, savingsData.canSave * 0.7));
+        if (summary.monthlyNet < 0) {
+            return { icon: '🔥', title: 'Audit every subscription you pay for', detail: `You're spending more than you earn. Most people find $50–$150/mo in forgotten or unused subscriptions. That's your fastest win right now.`, steps: ['Open your bank app and look at every recurring charge from the last 30 days', 'Write them all down — total them up', 'Cancel anything you haven\'t actively used this month, starting with the most expensive'], time: '20 min', urgency: 'critical', tab: 'myrecovery' };
+        } else if (highRateDebt) {
+            return { icon: '🎯', title: `Send an extra payment to ${highRateDebt.name}`, detail: `At ${highRateDebt.interestRate}% APR this is a guaranteed ${highRateDebt.interestRate}% return on every dollar — better than any savings account.`, steps: ['Log into your bank and go to Bill Payments', `Add ${highRateDebt.lender || highRateDebt.name} as a payee if not already there`, `Send an extra one-time payment of ${extraAmt} today — not next week, today`], time: '10 min', urgency: 'high', tab: 'debts' };
+        } else if (topSpend && topSpend.monthly > 200) {
+            return { icon: '✂️', title: `Cut your ${topSpend.name} spending by 20%`, detail: `At ${fmt(topSpend.monthly)}/mo, a 20% cut frees ${fmt(topSpend.monthly * 0.2)}/mo — that's ${fmt(topSpend.monthly * 0.2 * 12)}/yr. Small habit change, real money.`, steps: ['Open Spend Check and find your top 3 merchants in this category', `Set yourself a personal monthly limit of ${fmt(topSpend.monthly * 0.8)}`, 'Delete one app or unsubscribe from one service right now while you\'re thinking about it'], time: '5 min', urgency: 'medium', tab: 'myrecovery' };
+        } else {
+            const saveAmt = fmt(Math.max(50, savingsData.canSave * 0.5));
+            return { icon: '💰', title: 'Set up an automatic savings transfer', detail: `Paying yourself before you see the money is the most effective habit in personal finance. Set up ${saveAmt}/mo today.`, steps: ['Log into your bank and find Recurring Transfers or Automatic Savings', `Create a transfer of ${saveAmt} to your savings account`, 'Set the date to 1 day after your payday so it moves before you spend it'], time: '5 min', urgency: 'low', tab: 'myrecovery' };
+        }
+    }, [transactions, debts, summary, categoryData, savingsData]);
+
+    // ── SITUATION SUMMARY (plain English — for desperate user who needs a verdict) ──
+    const situationSummary = useMemo(() => {
+        if (transactions.length === 0) return null;
+        const parts = [];
+        if (summary.monthlyNet < -500) {
+            parts.push(`You're spending ${fmt(Math.abs(summary.monthlyNet))} more than you earn every month. That gap is the root cause of everything else.`);
+        } else if (summary.monthlyNet < 0) {
+            parts.push(`You're spending ${fmt(Math.abs(summary.monthlyNet))}/mo more than you earn — a small gap that compounds fast.`);
+        } else if (summary.monthlyNet < 300) {
+            parts.push(`You're barely breaking even — ${fmt(summary.monthlyNet)}/mo left after all expenses. Very little room to work with.`);
+        } else {
+            parts.push(`You have ${fmt(summary.monthlyNet)}/mo left after all expenses — that's your tool to work with.`);
+        }
+        const highRateDebt = debts.filter(d => Number(d.interestRate) >= 10).sort((a, b) => Number(b.interestRate) - Number(a.interestRate))[0];
+        if (highRateDebt) {
+            const annualInterest = Number(highRateDebt.amount) * Number(highRateDebt.interestRate) / 100;
+            parts.push(`Your ${highRateDebt.name} at ${highRateDebt.interestRate}% APR is costing roughly ${fmt(annualInterest / 12)}/mo in interest alone — money that builds nothing.`);
+        } else if (totalDebtBalance > 0) {
+            parts.push(`You're carrying ${fmt(totalDebtBalance)} in total debt.`);
+        }
+        const topSpend = [...categoryData].sort((a, b) => b.monthly - a.monthly).find(c => !['Income', 'Transfers', 'Debt Payments'].includes(c.name));
+        if (topSpend && topSpend.monthly > 150) parts.push(`Biggest spending category: ${topSpend.name} at ${fmt(topSpend.monthly)}/mo.`);
+        return parts.join(' ');
+    }, [transactions, summary, totalDebtBalance, debts, categoryData]);
+
+    // ── SURVIVABILITY VERDICT ──
+    const survivabilityVerdict = useMemo(() => {
+        if (transactions.length === 0) return null;
+        const dti = healthScore?.dti || 0;
+        const isDeficit = summary.monthlyNet < 0;
+        const highDebt = totalDebtBalance > summary.monthlyIncome * 12;
+        const moToDebtFree = totalDebtBalance > 0 && totalDebtPayments > 0 ? Math.ceil(totalDebtBalance / totalDebtPayments) : null;
+        if (isDeficit && (dti > 40 || totalDebtBalance > summary.monthlyIncome * 18)) {
+            return { label: 'Critical — Act Now', color: 'rose', message: `This is a serious situation — but people come back from worse. Your only job right now is to stop the bleeding: close the ${fmt(Math.abs(summary.monthlyNet))}/mo gap. Everything else comes after.`, timeline: 'Focus on 30 days at a time. Don\'t look at the full picture yet — just the next step.' };
+        } else if (isDeficit || dti > 30 || highDebt) {
+            return { label: 'Tight — But Fixable', color: 'amber', message: `You\'re in a tight spot, but this is genuinely fixable. Most people in a similar position reach positive cash flow within 3–6 months by cutting one or two key expenses. The debt feels permanent — it isn\'t.`, timeline: moToDebtFree ? `At current payments: debt-free in ~${moToDebtFree} months. A small amount of extra effort each month cuts that significantly.` : 'Add your debts to see a payoff timeline.' };
+        } else {
+            return { label: 'Manageable — Stay Consistent', color: 'emerald', message: `Your situation is manageable. Positive cash flow means you have something to work with. The main risk right now is inaction — high-interest debt costs you real money every single month you carry it.`, timeline: moToDebtFree ? `At current payments: debt-free in ~${moToDebtFree} months. Every extra dollar you throw at it accelerates that.` : 'You\'re on solid ground. Focus on building a 3-month emergency fund next.' };
+        }
+    }, [transactions, summary, totalDebtBalance, totalDebtPayments, debts, healthScore]);
+
+    // ── DO NOTHING PROJECTION (12-month cost of inaction) ──
+    const doNothingProjection = useMemo(() => {
+        if (transactions.length === 0 || totalDebtBalance === 0) return null;
+        const monthlyInterest = debts.reduce((s, d) => s + Number(d.amount) * (Number(d.interestRate) || 0) / 100 / 12, 0);
+        const interestThisYear = Math.round(monthlyInterest * 12);
+        const monthlyDebtChange = Math.max(0, -summary.monthlyNet) + monthlyInterest - totalDebtPayments;
+        const debtGrowth = Math.max(0, Math.round(monthlyDebtChange * 12));
+        const debtIn12Months = totalDebtBalance + debtGrowth;
+        if (interestThisYear < 100 && debtGrowth < 100) return null;
+        return { interestThisYear, debtGrowth, debtIn12Months };
+    }, [transactions, totalDebtBalance, debts, summary, totalDebtPayments]);
+
     // ── FINANCIAL SUMMARY FOR AI (v2: monthly figures) ──
     const financialContext = useMemo(() => {
+        const totalMinPayments = debts.reduce((s, d) => s + (Number(d.minimumPayment) || Number(d.monthlyPayment) || 0), 0);
+        const dti = summary.monthlyIncome > 0 ? ((totalMinPayments / summary.monthlyIncome) * 100).toFixed(1) : 'N/A';
+        const accountLines = accounts.map(a => {
+            const bal = accountBalances[a.id];
+            return bal !== undefined ? `- ${a.accountName} (${a.accountType}): ${fmt(Number(bal))}` : null;
+        }).filter(Boolean);
+        const goalLines = savingsGoals.map(g => `- ${g.name}: ${fmt(Number(g.current || 0))} / ${fmt(Number(g.target))} (${g.target > 0 ? Math.round((Number(g.current || 0) / Number(g.target)) * 100) : 0}%)`);
         return `FINANCIAL DATA SUMMARY (${dataRange.label}, ${dataRange.months.toFixed(1)} months of data):
 Monthly Income (avg): ${fmt(summary.monthlyIncome)}
 Monthly Spending (avg): ${fmt(summary.monthlySpending)}
 Monthly Net Cashflow: ${fmt(summary.monthlyNet)}
 Period Total Income: ${fmt(summary.income)}
 Period Total Spending: ${fmt(summary.spending)}
-Internal Transfer Volume: ${fmt(summary.transferVol)} (excluded from income/spending)
 Total Transactions: ${transactions.length}
+Financial Health Score: ${healthScore}/100
+Debt-to-Income Ratio: ${dti}%
+
+NET WORTH:
+Total Assets: ${fmt(netWorth.assets)}
+Total Liabilities: ${fmt(netWorth.liabilities)}
+Net Worth: ${fmt(netWorth.net)}
+
+BANK ACCOUNTS:
+${accountLines.length ? accountLines.join('\n') : 'No accounts connected.'}
 
 SPENDING BY CATEGORY (monthly averages):
 ${categoryData.map(c => `- ${c.name}: ${fmt(c.monthly)}/mo (${c.pct.toFixed(1)}%, ${c.count} txns)`).join('\n')}
 
-DEBTS & FIXED EXPENSES:
-${debts.length ? debts.map(d => `- ${d.name}: Balance ${fmt(d.amount)}, Payment ${fmt(d.monthlyPayment)}/mo, Rate ${d.interestRate}%, Priority: ${d.priority}`).join('\n') : 'No debts entered.'}
+DEBTS:
+${debts.length ? debts.map(d => `- ${d.name}: Balance ${fmt(d.amount)}, Min Payment ${fmt(d.minimumPayment || d.monthlyPayment)}/mo, Rate ${d.interestRate}%, Priority: ${d.priority}`).join('\n') : 'No debts entered.'}
 Total Debt Balance: ${fmt(totalDebtBalance)}
 Total Monthly Debt Payments: ${fmt(totalDebtPayments)}
+
+SAVINGS GOALS:
+${goalLines.length ? goalLines.join('\n') : 'No savings goals set.'}
 
 SAVINGS CAPACITY:
 Can save per month: ${fmt(savingsData.canSave)}
 Emergency fund target (3mo): ${fmt(savingsData.emergencyTarget3)}
 Emergency fund target (6mo): ${fmt(savingsData.emergencyTarget6)}
-Months to 3-month fund: ${savingsData.monthsTo3 === Infinity ? 'N/A' : savingsData.monthsTo3}
-Months to 6-month fund: ${savingsData.monthsTo6 === Infinity ? 'N/A' : savingsData.monthsTo6}`;
-    }, [summary, categoryData, debts, totalDebtBalance, totalDebtPayments, savingsData, dataRange]);
+Months to 3-month fund: ${savingsData.monthsTo3 === Infinity ? 'N/A (negative cashflow)' : savingsData.monthsTo3}
+Months to 6-month fund: ${savingsData.monthsTo6 === Infinity ? 'N/A (negative cashflow)' : savingsData.monthsTo6}`;
+    }, [summary, categoryData, debts, totalDebtBalance, totalDebtPayments, savingsData, dataRange, accounts, accountBalances, netWorth, healthScore, savingsGoals, transactions]);
 
     // ── AI CHAT (Ollama qwen3:8b) ──
     const sendChat = useCallback(async (message, isAuto = false) => {
         if (!message.trim() && !isAuto) return;
+        // Append /no_think to suppress qwen3 chain-of-thought for faster replies
+        const ollamaMessage = message + ' /no_think';
         const userMsg = isAuto
             ? { role: 'user', content: message, isSystem: true }
             : { role: 'user', content: message };
@@ -2354,9 +3004,11 @@ CORE PRINCIPLES you always apply:
 6. Small consistent wins compound into massive results
 
 ${financialContext}`;
-            const msgs = [...chatMessages, userMsg]
+            const historyMsgs = [...chatMessages]
                 .filter(m => !m.isSystem || m.role === 'user')
                 .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+            // Use ollamaMessage (with /no_think) only for the current outgoing message
+            const msgs = [...historyMsgs, { role: 'user', content: ollamaMessage }];
             const res = await fetch('http://localhost:11434/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2373,10 +3025,12 @@ ${financialContext}`;
             }
             const data = await res.json();
             const reply = data.message?.content || 'Unable to generate a response. Make sure Ollama is running with qwen3:8b loaded.';
+            setOllamaOnline(true);
             setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
         } catch (err) {
             const isOllamaDown = err.message.includes('Failed to fetch') || err.message.includes('ECONNREFUSED') || err.message.includes('NetworkError') || err.message.includes('net::ERR');
             if (isOllamaDown) {
+                setOllamaOnline(false);
                 // Seamless local fallback — user never sees an error
                 const localData = { summary, categoryData, debts, totalDebtBalance, totalDebtPayments, healthScore, savingsData, priorityStack, wins, runway };
                 const localReply = localAdvisor(message, localData);
@@ -2591,59 +3245,164 @@ ${financialContext}`;
                             </div>
                         </div>
                     </div>
-                    {/* 3-step guide */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {[
-                            { step: '1', icon: '📥', title: 'Import your statements', desc: 'Export a CSV from your bank website and drop it in. Works with TD, RBC, Scotiabank, BMO, CIBC, and most others.', action: 'Import Now', tab: 'transactions', color: 'emerald' },
-                            { step: '2', icon: '💳', title: 'Add your debts', desc: 'Enter credit cards, loans, and mortgage balances. The app will build a personalized payoff strategy with exact timelines.', action: 'Add Debts', tab: 'debts', color: 'amber' },
-                            { step: '3', icon: '🤖', title: 'Get your action plan', desc: 'Your AI advisor analyzes everything and tells you exactly what to do first — with specific dollar amounts and timelines.', action: 'View Advisor', tab: 'advisor', color: 'violet' },
-                        ].map(s => (
-                            <div key={s.step} className="glass-card p-5 flex flex-col">
-                                <div className="flex items-center gap-3 mb-3">
-                                    <div className={`w-7 h-7 rounded-full bg-${s.color}-500/20 border border-${s.color}-500/30 flex items-center justify-center shrink-0`}>
-                                        <span className={`text-xs font-bold text-${s.color}-400`}>{s.step}</span>
-                                    </div>
-                                    <span className="text-xl">{s.icon}</span>
-                                    <h3 className="text-sm font-semibold text-white">{s.title}</h3>
+                    {/* 3-step checklist */}
+                    {(() => {
+                        const steps = [
+                            { step: 1, icon: '📥', title: 'Import your bank statements', desc: 'Export a CSV from your bank website and drop it in. Works with TD, RBC, Scotiabank, BMO, CIBC, and most others.', action: 'Import Now', tab: 'transactions', done: accounts.length > 0 },
+                            { step: 2, icon: '💳', title: 'Add your debts', desc: 'Enter credit cards, loans, and mortgage balances. The app will build a personalized payoff strategy with exact timelines.', action: 'Add Debts', tab: 'debts', done: debts.length > 0 },
+                            { step: 3, icon: '🎯', title: 'Review your Recovery Plan', desc: 'Your 7-step ladder and 30-day sprint are ready once you\'ve imported data. See exactly what to do first and by when.', action: 'View Plan', tab: 'myrecovery', done: accounts.length > 0 && debts.length > 0 },
+                        ];
+                        const doneCount = steps.filter(s => s.done).length;
+                        return (
+                            <div className="glass-card p-5">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-sm font-semibold text-white">Getting Started</h3>
+                                    <span className="text-xs text-slate-500">{doneCount}/3 complete</span>
                                 </div>
-                                <p className="text-xs text-slate-500 leading-relaxed flex-1">{s.desc}</p>
-                                <button onClick={() => setActiveTab(s.tab)} className="mt-4 text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors">
-                                    {s.action} <ChevronRight size={12} />
-                                </button>
+                                <div className="h-1 bg-slate-700/50 rounded-full overflow-hidden mb-5">
+                                    <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-500" style={{ width: `${(doneCount / 3) * 100}%` }} />
+                                </div>
+                                <div className="space-y-3">
+                                    {steps.map(s => (
+                                        <div key={s.step} className={`flex items-start gap-4 p-4 rounded-xl border transition-all ${s.done ? 'bg-emerald-500/5 border-emerald-500/15' : 'bg-white/[0.02] border-white/[0.07]'}`}>
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${s.done ? 'bg-emerald-500 text-white' : 'bg-slate-700/50 border border-slate-600/50 text-slate-400'}`}>
+                                                {s.done ? '✓' : s.step}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-base">{s.icon}</span>
+                                                    <h4 className={`text-sm font-semibold ${s.done ? 'text-emerald-400' : 'text-white'}`}>{s.title}</h4>
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">{s.desc}</p>
+                                            </div>
+                                            {!s.done && (
+                                                <button onClick={() => setActiveTab(s.tab)} className="shrink-0 text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap">
+                                                    {s.action} →
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
-                        ))}
-                    </div>
+                        );
+                    })()}
                 </div>
             ) : (
                 <>
-                    {/* ── 1. PERIOD FILTER ── */}
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 text-xs">
-                            <Calendar size={12} className="text-emerald-400" />
-                            <span className="text-slate-400 font-medium">{dashboardPeriod === 'all' ? dataRange.label : dashboardRange.label}</span>
-                            <span className="text-slate-700">·</span>
-                            <span className="text-slate-500">{dashboardTx.length} transactions</span>
-                            {transferTxIds.size > 0 && <span className="text-sky-600">· {Math.floor(transferTxIds.size / 2)} transfers excluded</span>}
+                    {/* ── 0a. YOUR SITUATION RIGHT NOW ── */}
+                    {situationSummary && survivabilityVerdict && (
+                        <div className={`glass-card p-5 border-l-[3px] animate-fade-in ${
+                            survivabilityVerdict.color === 'rose' ? 'border-l-rose-500' :
+                            survivabilityVerdict.color === 'amber' ? 'border-l-amber-500' :
+                            'border-l-emerald-500'
+                        }`}>
+                            <div className="flex items-start justify-between gap-4 mb-3">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your Situation Right Now</span>
+                                <span className={`shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wide ${
+                                    survivabilityVerdict.color === 'rose' ? 'bg-rose-500/20 text-rose-400' :
+                                    survivabilityVerdict.color === 'amber' ? 'bg-amber-500/20 text-amber-400' :
+                                    'bg-emerald-500/20 text-emerald-400'
+                                }`}>{survivabilityVerdict.label}</span>
+                            </div>
+                            <p className="text-sm text-slate-200 leading-relaxed mb-2">{situationSummary}</p>
+                            <p className={`text-xs leading-relaxed mb-3 ${
+                                survivabilityVerdict.color === 'rose' ? 'text-rose-300/80' :
+                                survivabilityVerdict.color === 'amber' ? 'text-amber-300/80' :
+                                'text-emerald-300/80'
+                            }`}>{survivabilityVerdict.message}</p>
+                            <p className="text-[11px] text-slate-500 italic">{survivabilityVerdict.timeline}</p>
                         </div>
-                        <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(56,191,255,0.04)', border: '1px solid rgba(56,191,255,0.1)' }}>
-                            {[
-                                { key: 'all', label: 'All Time' },
-                                { key: 'last6', label: '6 Mo' },
-                                { key: 'last3', label: '3 Mo' },
-                                ...availableMonths.slice(-6).reverse().map(m => ({
-                                    key: m,
-                                    label: new Date(m + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-                                }))
-                            ].map(p => (
-                                <button key={p.key} onClick={() => setDashboardPeriod(p.key)}
-                                    className="text-[11px] px-3 py-1.5 rounded-lg font-semibold transition-all"
-                                    style={dashboardPeriod === p.key
-                                        ? { background: 'rgba(56,191,255,0.15)', color: '#38BFFF', boxShadow: '0 0 12px rgba(56,191,255,0.2)' }
-                                        : { color: 'var(--text-faint)' }}>
-                                    {p.label}
+                    )}
+
+                    {/* ── 0b. THE ONE THING ── */}
+                    {weeklyFocus && (
+                        <div className={`glass-card p-5 border animate-fade-in ${
+                            weeklyFocusDone ? 'border-emerald-500/30 bg-emerald-500/[0.03]' :
+                            weeklyFocus.urgency === 'critical' ? 'border-rose-500/30' :
+                            weeklyFocus.urgency === 'high' ? 'border-amber-500/30' :
+                            weeklyFocus.urgency === 'medium' ? 'border-blue-500/25' :
+                            'border-emerald-500/20'
+                        }`}>
+                            <div className="flex items-center justify-between mb-4">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Your One Job This Week</span>
+                                <span className="text-[10px] text-slate-600 font-medium">~{weeklyFocus.time}</span>
+                            </div>
+                            <div className="flex items-start gap-4">
+                                <button onClick={() => setWeeklyFocusDone(d => !d)}
+                                    className={`shrink-0 w-11 h-11 rounded-xl border-2 flex items-center justify-center text-xl transition-all ${
+                                        weeklyFocusDone ? 'bg-emerald-500 border-emerald-400 text-white text-base' :
+                                        weeklyFocus.urgency === 'critical' ? 'border-rose-500/50 hover:border-rose-400' :
+                                        weeklyFocus.urgency === 'high' ? 'border-amber-500/50 hover:border-amber-400' :
+                                        'border-slate-600 hover:border-slate-400'
+                                    }`}>
+                                    {weeklyFocusDone ? '✓' : weeklyFocus.icon}
                                 </button>
-                            ))}
+                                <div className="flex-1 min-w-0">
+                                    <h3 className={`text-base font-bold mb-1 leading-snug ${weeklyFocusDone ? 'text-emerald-400 line-through opacity-60' : 'text-white'}`}>
+                                        {weeklyFocus.title}
+                                    </h3>
+                                    {weeklyFocusDone ? (
+                                        <p className="text-sm text-emerald-400/80">Done for this week. Check back next week for a new priority.</p>
+                                    ) : (
+                                        <>
+                                            <p className="text-xs text-slate-400 leading-relaxed mb-3">{weeklyFocus.detail}</p>
+                                            <ol className="space-y-2">
+                                                {weeklyFocus.steps.map((step, i) => (
+                                                    <li key={i} className="flex items-start gap-2.5 text-xs text-slate-300">
+                                                        <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold mt-0.5 ${
+                                                            weeklyFocus.urgency === 'critical' ? 'bg-rose-500/25 text-rose-400' :
+                                                            weeklyFocus.urgency === 'high' ? 'bg-amber-500/25 text-amber-400' :
+                                                            'bg-slate-600/50 text-slate-400'
+                                                        }`}>{i + 1}</span>
+                                                        {step}
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        </>
+                                    )}
+                                </div>
+                                {!weeklyFocusDone && (
+                                    <button onClick={() => setActiveTab(weeklyFocus.tab)}
+                                        className="shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap self-start"
+                                        style={{ background: 'rgba(52,211,153,0.12)', color: '#34D399', border: '1px solid rgba(52,211,153,0.3)' }}>
+                                        Go →
+                                    </button>
+                                )}
+                            </div>
                         </div>
+                    )}
+
+                    {/* ── 0c. COST OF DOING NOTHING ── */}
+                    {doNothingProjection && (
+                        <div className="px-5 py-4 rounded-xl border border-rose-500/20 bg-rose-500/[0.03] animate-fade-in">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">If nothing changes — next 12 months</p>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <p className="text-[10px] text-slate-500 mb-1">Interest you'll pay</p>
+                                    <p className="text-xl font-bold font-mono text-rose-400">{fmt(doNothingProjection.interestThisYear)}</p>
+                                    <p className="text-[10px] text-slate-600 mt-0.5">this year alone</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-slate-500 mb-1">Your debt in 12 mo</p>
+                                    <p className="text-xl font-bold font-mono text-rose-400">{fmt(doNothingProjection.debtIn12Months)}</p>
+                                    <p className="text-[10px] text-slate-600 mt-0.5">{doNothingProjection.debtGrowth > 0 ? `+${fmt(doNothingProjection.debtGrowth)} vs today` : 'same as today'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-slate-500 mb-1">Follow the plan instead</p>
+                                    <p className="text-xl font-bold font-mono text-emerald-400">Save {fmt(doNothingProjection.interestThisYear + doNothingProjection.debtGrowth)}</p>
+                                    <p className="text-[10px] text-slate-600 mt-0.5">vs doing nothing</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── 1. DATA RANGE INFO ── */}
+                    <div className="flex items-center gap-2 text-xs">
+                        <Calendar size={12} className="text-emerald-400" />
+                        <span className="text-slate-400 font-medium">{dashboardPeriod === 'all' ? dataRange.label : dashboardRange.label}</span>
+                        <span className="text-slate-700">·</span>
+                        <span className="text-slate-500">{dashboardTx.length} transactions</span>
+                        {transferTxIds.size > 0 && <span className="text-sky-600">· {Math.floor(transferTxIds.size / 2)} transfers excluded</span>}
                     </div>
 
                     {/* ── 2. STAT CARDS — drag-to-reorder ── */}
@@ -2699,8 +3458,47 @@ ${financialContext}`;
                         );
                     })()}
 
+                    {/* ── 2b. DEBT-FREE DATE CARD ── */}
+                    {totalDebtBalance > 0 && totalDebtPayments > 0 && (() => {
+                        const moToFree = Math.ceil(totalDebtBalance / totalDebtPayments);
+                        if (moToFree >= 999) return null;
+                        const freeDate = new Date();
+                        freeDate.setMonth(freeDate.getMonth() + moToFree);
+                        const dateStr = freeDate.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+                        const yrs = Math.floor(moToFree / 12);
+                        const mos = moToFree % 12;
+                        const timeStr = yrs > 0 ? `${yrs}yr ${mos > 0 ? mos + 'mo' : ''}` : `${mos} months`;
+                        const estInterest = debts.reduce((s, d) => {
+                            const bal = Number(d.amount); const r = Number(d.interestRate) / 100 / 12;
+                            const pmt = Number(d.monthlyPayment) || 0;
+                            if (r <= 0 || pmt <= 0) return s;
+                            const mo = pmt > bal * r ? Math.ceil(-Math.log(1 - (r * bal / pmt)) / Math.log(1 + r)) : moToFree;
+                            const total = pmt * Math.min(mo, moToFree);
+                            return s + Math.max(0, total - bal);
+                        }, 0);
+                        return (
+                            <div className="glass-card p-4 flex items-center gap-4 animate-fade-in" style={{ borderTop: '1px solid rgba(56,191,255,0.18)', boxShadow: '0 0 28px rgba(56,191,255,0.05)' }}>
+                                <div className="w-11 h-11 rounded-xl bg-sky-500/12 border border-sky-500/25 flex items-center justify-center shrink-0">
+                                    <Target size={20} className="text-sky-400" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Projected Debt-Free</p>
+                                    <p className="text-base font-bold text-white mt-0.5">{dateStr} <span className="text-xs text-slate-400 font-normal">· {timeStr} away</span></p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">{fmt(totalDebtBalance)} remaining · {fmt(totalDebtPayments)}/mo payments</p>
+                                </div>
+                                {estInterest > 50 && (
+                                    <div className="shrink-0 text-right hidden sm:block">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Interest cost</p>
+                                        <p className="font-mono text-sm text-rose-400 font-semibold">{fmt(estInterest)}</p>
+                                        <p className="text-[9px] text-slate-600">if paid on schedule</p>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
+
                     {/* ── 3. ALERTS ── compact pill chips */}
-                    {(anomalies.length > 0 || upcomingBills.length > 0 || runway) && (
+                    {(anomalies.length > 0 || upcomingBills.length > 0 || runway || suspiciousFlags.size > 0 || (nwTrend.length >= 2 && Math.abs(nwTrend[nwTrend.length-1].nw - nwTrend[0].nw) >= 100)) && (
                         <div className="flex flex-wrap gap-2">
                             {runway && (
                                 <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${runway.critical ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
@@ -2710,6 +3508,17 @@ ${financialContext}`;
                                         : `Deficit mode · savings last ~${runway.months}mo`}
                                 </div>
                             )}
+                            {suspiciousFlags.size > 0 && (() => {
+                                const warnCount = [...suspiciousFlags.values()].filter(f => f.severity === 'warn').length;
+                                if (warnCount === 0) return null;
+                                return (
+                                    <button onClick={() => setActiveTab('finances')}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 transition-all cursor-pointer">
+                                        <AlertTriangle size={11} className="shrink-0" />
+                                        {warnCount} suspicious transaction{warnCount !== 1 ? 's' : ''} flagged · check My Finances
+                                    </button>
+                                );
+                            })()}
                             {anomalies.slice(0, 2).map((a, i) => (
                                 <div key={i} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${a.type === 'high' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
                                     <AlertTriangle size={11} className="shrink-0" />
@@ -2722,6 +3531,16 @@ ${financialContext}`;
                                     {bill.merchant} <span className="font-mono text-amber-400">{bill.nextDue.slice(5)}</span> · <span className="font-mono text-rose-400">{fmt(bill.avgAmount)}</span>
                                 </div>
                             ))}
+                            {nwTrend.length >= 2 && (() => {
+                                const delta = nwTrend[nwTrend.length-1].nw - nwTrend[0].nw;
+                                if (Math.abs(delta) < 100) return null;
+                                return (
+                                    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium ${delta > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
+                                        {delta > 0 ? <TrendingUp size={11} className="shrink-0" /> : <TrendingDown size={11} className="shrink-0" />}
+                                        Net worth {delta > 0 ? 'up' : 'down'} {fmt(Math.abs(delta))} since {nwTrend[0].label}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     )}
 
@@ -2845,11 +3664,11 @@ ${financialContext}`;
                                         <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#a78bfa' }}>AI Insight</span>
                                         <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 500, padding: '1px 6px', background: 'rgba(139,92,246,0.1)', borderRadius: 4, border: '1px solid rgba(139,92,246,0.15)' }}>TOP PRIORITY</span>
                                     </div>
-                                    <p style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, lineHeight: 1.5 }}>
-                                        {actionPlan[0]?.action}
+                                    <p style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600, lineHeight: 1.5 }}>
+                                        {actionPlan[0]?.title}
                                     </p>
-                                    {actionPlan[0]?.detail && (
-                                        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>{actionPlan[0].detail}</p>
+                                    {actionPlan[0]?.desc && (
+                                        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>{actionPlan[0].desc}</p>
                                     )}
                                 </div>
                                 {actionPlan.length > 1 && (
@@ -2857,7 +3676,7 @@ ${financialContext}`;
                                         {actionPlan.slice(1).map((a, i) => (
                                             <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                                                 <span style={{ color: 'rgba(139,92,246,0.6)', fontWeight: 700, flexShrink: 0 }}>#{i+2}</span>
-                                                <span style={{ lineHeight: 1.4 }}>{a.action}</span>
+                                                <span style={{ lineHeight: 1.4 }}>{a.title}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -2866,26 +3685,77 @@ ${financialContext}`;
                         </div>
                     )}
 
+                    {/* ── 3b. WHERE YOUR MONEY IS GOING — top-spending answer ── */}
+                    {categoryData.length > 0 && (
+                        <div className="glass-card p-5">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-base font-semibold text-white">Where Your Money Is Going</h3>
+                                <span className="text-xs text-slate-500">{dashboardPeriod === 'all' ? 'All time' : dashboardPeriod === 'last3' ? 'Last 3 months' : dashboardPeriod === 'last6' ? 'Last 6 months' : dashboardPeriod} avg</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                                {categoryData.slice(0, 5).map((cat, i) => (
+                                    <div key={cat.name} className="p-3 rounded-xl bg-white/[0.025] border border-white/[0.06]">
+                                        <div className="flex items-center gap-1.5 mb-1.5">
+                                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: cat.color }} />
+                                            <p className="text-[11px] text-slate-400 truncate">{cat.name}</p>
+                                        </div>
+                                        <p className="text-base font-bold font-mono text-white">{fmtShort(cat.monthly)}</p>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">/mo · {cat.pct.toFixed(0)}%</p>
+                                        <div className="h-1 bg-slate-700/50 rounded-full mt-2 overflow-hidden">
+                                            <div className="h-full rounded-full" style={{ width: `${Math.min(100, cat.pct)}%`, background: cat.color }} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── 4. INCOME vs EXPENSES — Gradient Area Chart ── */}
                     {incomeExpenseTrend.length > 1 && (
-                        <div className="chart-container p-6" style={{ position: 'relative' }}>
-                            {/* Smooth hover overlay */}
-                            <div style={{
-                                position: 'absolute', top: 16, right: 16, zIndex: 10,
-                                opacity: chartHoverData ? 1 : 0,
-                                transition: 'opacity 0.15s ease',
+                        <div ref={chartContainerRef} className="chart-container p-6" style={{ position: 'relative' }}
+                            onMouseMove={(e) => {
+                                // Update overlay position directly via DOM ref — zero re-renders, perfectly smooth
+                                if (chartOverlayRef.current && chartContainerRef.current) {
+                                    const rect = chartContainerRef.current.getBoundingClientRect();
+                                    const x = e.clientX - rect.left;
+                                    const y = e.clientY - rect.top;
+                                    const ow = 172;
+                                    const ox = x + 18 + ow > rect.width - 8 ? x - ow - 10 : x + 18;
+                                    const oy = Math.max(8, Math.min(y - 50, rect.height - 110));
+                                    chartOverlayRef.current.style.left = ox + 'px';
+                                    chartOverlayRef.current.style.top = oy + 'px';
+                                    chartOverlayRef.current.style.opacity = '1';
+                                }
+                            }}
+                            onMouseLeave={() => {
+                                if (chartOverlayRef.current) chartOverlayRef.current.style.opacity = '0';
+                                setChartHoverData(null);
+                            }}
+                        >
+                            {/* Cursor-following overlay — positioned via DOM ref, no re-renders */}
+                            <div ref={chartOverlayRef} style={{
+                                position: 'absolute', zIndex: 20,
+                                opacity: 0,
+                                transition: 'opacity 0.12s ease',
                                 pointerEvents: 'none',
-                                background: 'rgba(3,8,16,0.92)', border: '1px solid rgba(255,255,255,0.1)',
+                                background: 'rgba(3,8,16,0.94)', border: '1px solid rgba(255,255,255,0.12)',
                                 borderRadius: 12, padding: '10px 14px',
-                                backdropFilter: 'blur(12px)',
-                                minWidth: 160,
+                                backdropFilter: 'blur(16px)',
+                                width: 172,
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
                             }}>
-                                {chartHoverData && (<>
-                                    <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 600 }}>{chartHoverData.label}</p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 2 }}>↑ {fmt(chartHoverData.income)}</p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 2 }}>↓ {fmt(chartHoverData.expenses)}</p>
-                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#A78BFA' }}>≈ {fmt(chartHoverData.net)}</p>
-                                </>)}
+                                {chartHoverData ? (<>
+                                    <p style={{ fontSize: 11, color: '#64748b', marginBottom: 7, fontWeight: 600, letterSpacing: '0.04em' }}>{chartHoverData.label}</p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#10F0A0', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>INCOME</span>{fmt(chartHoverData.income)}
+                                    </p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: '#FF5C7A', marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>EXPENSES</span>{fmt(chartHoverData.expenses)}
+                                    </p>
+                                    <p style={{ fontSize: 12, fontFamily: 'DM Mono, monospace', color: chartHoverData.net >= 0 ? '#38BFFF' : '#FF5C7A', display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: '#475569', fontSize: 10 }}>NET</span>{fmt(chartHoverData.net)}
+                                    </p>
+                                </>) : <p style={{ fontSize: 11, color: '#475569' }}>Hover over chart</p>}
                             </div>
                             {/* Floating particles */}
                             {[...Array(6)].map((_, i) => (
@@ -2904,19 +3774,19 @@ ${financialContext}`;
                                     <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
                                         Income vs Expenses
                                     </h3>
-                                    <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Monthly trend · blue line = net cash flow</p>
+                                    <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Monthly trend · hover for details</p>
                                 </div>
                                 <div className="flex items-center gap-4" style={{ fontSize: 11 }}>
                                     <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 2, background: 'linear-gradient(90deg,#34D399,#60A5FA)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
+                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#10F0A0,#38BFFF)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(16,240,160,0.6)' }} />
                                         <span style={{ color: 'var(--text-muted)' }}>Income</span>
                                     </span>
                                     <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 2, background: 'linear-gradient(90deg,#FB7185,#F59E0B)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(251,113,133,0.5)' }} />
+                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#FF5C7A,#FBBF24)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(255,92,122,0.6)' }} />
                                         <span style={{ color: 'var(--text-muted)' }}>Expenses</span>
                                     </span>
                                     <span className="flex items-center gap-1.5">
-                                        <span style={{ width: 20, height: 2, background: 'linear-gradient(90deg,#8B5CF6,#60A5FA)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(139,92,246,0.5)' }} />
+                                        <span style={{ width: 20, height: 3, background: 'linear-gradient(90deg,#A78BFA,#38BFFF)', display: 'inline-block', borderRadius: 2, boxShadow: '0 0 6px rgba(167,139,250,0.6)' }} />
                                         <span style={{ color: 'var(--text-muted)' }}>Net</span>
                                     </span>
                                 </div>
@@ -2956,39 +3826,31 @@ ${financialContext}`;
                                             <stop offset="0%" stopColor="#A78BFA" stopOpacity={0.18} />
                                             <stop offset="100%" stopColor="#A78BFA" stopOpacity={0} />
                                         </linearGradient>
-                                        <filter id="glowIncome"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                                        <filter id="glowExpense"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
                                     </defs>
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
                                     <XAxis dataKey="label" stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} axisLine={false} tickLine={false} />
                                     <YAxis stroke="transparent" tick={{ fill: '#4B5563', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={48} axisLine={false} tickLine={false} />
-                                    <Area
-                                        type="monotone" dataKey="income" name="Income"
-                                        stroke="url(#incomeGrad)" strokeWidth={2.5}
-                                        fill="url(#incomeFill)"
-                                        dot={false}
-                                        activeDot={{ r: 5, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2, filter: 'drop-shadow(0 0 8px rgba(16,240,160,0.9))' }}
-                                        isAnimationActive={true} animationDuration={1200} animationEasing="ease-out"
-                                        style={{ filter: 'drop-shadow(0 0 5px rgba(16,240,160,0.5))' }}
+                                    <Tooltip
+                                        cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }}
+                                        content={() => null}
                                     />
-                                    <Area
-                                        type="monotone" dataKey="expenses" name="Expenses"
-                                        stroke="url(#expenseGrad)" strokeWidth={2.5}
-                                        fill="url(#expenseFill)"
-                                        dot={false}
-                                        activeDot={{ r: 5, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2, filter: 'drop-shadow(0 0 8px rgba(255,92,122,0.9))' }}
-                                        isAnimationActive={true} animationDuration={1400} animationEasing="ease-out"
-                                        style={{ filter: 'drop-shadow(0 0 5px rgba(255,92,122,0.45))' }}
+                                    <Area type="monotone" dataKey="income" name="Income"
+                                        stroke="#10F0A0" strokeWidth={2.5}
+                                        fill="url(#incomeFill)" dot={false}
+                                        activeDot={{ r: 5, fill: '#10F0A0', stroke: '#030810', strokeWidth: 2 }}
+                                        isAnimationActive={false}
                                     />
-                                    <Area
-                                        type="monotone" dataKey="net" name="Net"
-                                        stroke="url(#netGrad)" strokeWidth={2}
-                                        fill="url(#netFill)"
-                                        dot={false}
-                                        activeDot={{ r: 4, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2, filter: 'drop-shadow(0 0 8px rgba(167,139,250,0.9))' }}
-                                        isAnimationActive={true} animationDuration={1600} animationEasing="ease-out"
-                                        style={{ filter: 'drop-shadow(0 0 4px rgba(167,139,250,0.4))' }}
-                                        strokeDasharray="0"
+                                    <Area type="monotone" dataKey="expenses" name="Expenses"
+                                        stroke="#FF5C7A" strokeWidth={2.5}
+                                        fill="url(#expenseFill)" dot={false}
+                                        activeDot={{ r: 5, fill: '#FF5C7A', stroke: '#030810', strokeWidth: 2 }}
+                                        isAnimationActive={false}
+                                    />
+                                    <Area type="monotone" dataKey="net" name="Net"
+                                        stroke="#A78BFA" strokeWidth={2}
+                                        fill="url(#netFill)" dot={false}
+                                        activeDot={{ r: 4, fill: '#A78BFA', stroke: '#030810', strokeWidth: 2 }}
+                                        isAnimationActive={false}
                                     />
                                 </AreaChart>
                             </ResponsiveContainer>
@@ -3000,48 +3862,20 @@ ${financialContext}`;
                         {/* Spending pie + category list */}
                         <div className="glass-card p-6 lg:col-span-3">
                             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                                <h3 className="text-base font-semibold text-white">Spending by Category</h3>
-                                <div className="flex items-center gap-1.5">
-                                    {/* Pie period filter */}
-                                    {[{k:'all',l:'All'},{k:'3m',l:'3 Mo'},{k:'1m',l:'1 Mo'}].map(p => (
-                                        <button key={p.k} onClick={() => { setPiePeriod(p.k); setSelectedCategory(null); }}
-                                            className="text-[10px] px-2.5 py-1 rounded-lg font-semibold transition-all"
-                                            style={piePeriod === p.k ? { background: 'rgba(167,139,250,0.15)', color: '#A78BFA', border: '1px solid rgba(167,139,250,0.3)' } : { color: 'var(--text-faint)', border: '1px solid transparent' }}>
-                                            {p.l}
-                                        </button>
-                                    ))}
-                                    {selectedCategory && (
-                                        <button onClick={() => setSelectedCategory(null)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 border border-white/10 px-2 py-1 rounded-lg transition-all ml-1">
-                                            <X size={11} /> {selectedCategory}
-                                        </button>
-                                    )}
+                                <div>
+                                    <h3 className="text-base font-semibold text-white">Spending by Category</h3>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">{dashboardPeriod === 'all' ? 'All time' : dashboardPeriod === 'last3' ? 'Last 3 months' : dashboardPeriod === 'last6' ? 'Last 6 months' : dashboardPeriod} · synced with period filter</p>
                                 </div>
+                                {selectedCategory && (
+                                    <button onClick={() => setSelectedCategory(null)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 border border-white/10 px-2 py-1 rounded-lg transition-all">
+                                        <X size={11} /> {selectedCategory}
+                                    </button>
+                                )}
                             </div>
                             {(() => {
-                                // Compute pie data for selected period
-                                let pieTxSource = dashboardTx;
-                                if (piePeriod === '3m') {
-                                    const cutoff = availableMonths.slice(-3)[0] || '';
-                                    pieTxSource = transactions.filter(t => t.date.slice(0,7) >= cutoff);
-                                } else if (piePeriod === '1m') {
-                                    const cutoff = availableMonths.slice(-1)[0] || '';
-                                    pieTxSource = transactions.filter(t => t.date.slice(0,7) === cutoff);
-                                }
-                                const pMonths = piePeriod === '3m' ? 3 : piePeriod === '1m' ? 1 : dashboardRange.months;
-                                const pMap = {}, pCount = {};
-                                pieTxSource.filter(t => t.amount < 0 && !transferTxIds.has(t.id)).forEach(t => {
-                                    const cat = t.category || 'Other';
-                                    if (cat === 'Transfers') return;
-                                    pMap[cat] = (pMap[cat] || 0) + Math.abs(t.amount);
-                                    pCount[cat] = (pCount[cat] || 0) + 1;
-                                });
-                                const pTotal = Object.values(pMap).reduce((s,v) => s+v, 0);
-                                const pieData = Object.entries(pMap).map(([name,value]) => ({
-                                    name, value: Math.round(value*100)/100,
-                                    count: pCount[name]||0, pct: pTotal>0?(value/pTotal*100):0,
-                                    monthly: value/pMonths,
-                                    color: CATEGORIES.find(c=>c.name===name)?.color||'#94a3b8',
-                                })).sort((a,b)=>b.value-a.value);
+                                // Always use dashboardTx — synced with topbar period filter
+                                const pieTxSource = dashboardTx;
+                                const pieData = categoryData; // already computed from dashboardTx
 
                                 if (!pieData.length) return <p className="text-slate-500 text-sm">No spending data for this period</p>;
                                 return (
@@ -3616,7 +4450,7 @@ ${financialContext}`;
                             <span className="text-xs text-slate-500">Current Balance:</span>
                             <input type="number" placeholder="Enter current balance"
                                 value={accountBalances[acc.id] ?? ''}
-                                onChange={e => setAccountBalances(prev => ({ ...prev, [acc.id]: e.target.value }))}
+                                onChange={e => setAccountBalances(prev => ({ ...prev, [acc.id]: parseFloat(e.target.value) || 0 }))}
                                 className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-right text-emerald-400 focus:border-emerald-500 outline-none font-mono max-w-xs" />
                         </div>
                     )}
@@ -3700,6 +4534,14 @@ ${financialContext}`;
                                                         return txAcc ? <span className={`text-[10px] px-1.5 py-0.5 rounded-full border shrink-0 ${txCfg?.badge || ''}`}>{txAcc.accountName}</span> : null;
                                                     })()}
                                                     {txNotes[t.id] && <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded-full shrink-0 max-w-[120px] truncate" title={txNotes[t.id]}>📝 {txNotes[t.id]}</span>}
+                                                    {suspiciousFlags.has(t.id) && (() => {
+                                                        const f = suspiciousFlags.get(t.id);
+                                                        return (
+                                                            <span title={f.reason} className={`text-[10px] px-1.5 py-0.5 rounded-full border shrink-0 cursor-help ${f.severity === 'warn' ? 'bg-rose-500/15 text-rose-400 border-rose-500/25' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
+                                                                {f.severity === 'warn' ? '⚠' : 'ℹ'} {f.reason}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </td>
                                             <td className={`p-4 text-right font-mono font-medium ${t.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(t.amount)}</td>
@@ -3790,15 +4632,15 @@ ${financialContext}`;
                 <div className={`sm:col-span-2 drop-zone p-6 text-center cursor-pointer ${dragActive ? 'active' : ''}`}
                     onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
                     onClick={() => fileInputRef.current?.click()}>
-                    <input ref={fileInputRef} type="file" accept=".csv" multiple className="hidden"
-                        onChange={(e) => { const files = Array.from(e.target.files || []).filter(f => f.name.toLowerCase().endsWith('.csv')); if (files.length) setPendingUpload({ files }); e.target.value = ''; }} />
+                    <input ref={fileInputRef} type="file" accept=".csv,.pdf,.jpg,.jpeg,.png,.txt" multiple className="hidden"
+                        onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) { const csvPdf = files.filter(f => /\.(csv|txt)$/i.test(f.name)); const others = files.filter(f => /\.(pdf|jpg|jpeg|png)$/i.test(f.name)); if (csvPdf.length) setPendingUpload({ files: csvPdf }); if (others.length) handleFiles(others, false, null); } e.target.value = ''; }} />
                     {csvLoading ? (
                         <Loader2 size={28} className="text-emerald-400 animate-spin mx-auto mb-2" />
                     ) : (
                         <Upload size={28} className="text-slate-400 mx-auto mb-2" />
                     )}
-                    <p className="text-white font-medium text-sm">{csvLoading ? 'Parsing...' : 'Drop CSV files or click to upload'}</p>
-                    <p className="text-xs text-slate-500 mt-1">TD Bank · Standard CSV · Multiple files at once</p>
+                    <p className="text-white font-medium text-sm">{csvLoading ? 'Parsing...' : 'Drop files or click to upload'}</p>
+                    <p className="text-xs text-slate-500 mt-1">CSV · PDF · TXT · Multiple files at once</p>
                 </div>
                 <div className="flex flex-col gap-3">
                     <button onClick={() => setShowManualTxForm(v => !v)}
@@ -3817,6 +4659,44 @@ ${financialContext}`;
                     )}
                 </div>
             </div>
+
+            {/* ── Import Success Banner ── */}
+            {importSummary && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-emerald-500/8 border border-emerald-500/25 animate-fade-in">
+                    <CheckCircle size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-emerald-300">Import successful — {importSummary.count} transactions loaded</p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            {importSummary.accounts.join(', ')} · {fmt(importSummary.income)} income, {fmt(importSummary.spending)} spending detected
+                        </p>
+                    </div>
+                    <button onClick={() => setImportSummary(null)} className="text-slate-600 hover:text-slate-400 shrink-0 mt-0.5"><X size={14} /></button>
+                </div>
+            )}
+
+            {/* ── CSV Error Banner ── */}
+            {csvError && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-rose-500/8 border border-rose-500/25 animate-fade-in">
+                    <span className="text-lg shrink-0">⚠️</span>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-rose-300 mb-0.5">Could not read file</p>
+                        <p className="text-xs text-slate-400 leading-relaxed">{csvError}</p>
+                    </div>
+                    <button onClick={() => setCsvError(null)} className="text-slate-600 hover:text-slate-400 shrink-0 mt-0.5"><X size={14} /></button>
+                </div>
+            )}
+
+            {/* ── Unsupported File Banner ── */}
+            {unsupportedFileMsg && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/8 border border-amber-500/25 animate-fade-in">
+                    <span className="text-lg shrink-0">📷</span>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-amber-300 mb-0.5">Image files need manual conversion</p>
+                        <p className="text-xs text-slate-400 leading-relaxed">{unsupportedFileMsg}</p>
+                    </div>
+                    <button onClick={() => setUnsupportedFileMsg(null)} className="text-slate-600 hover:text-slate-400 shrink-0"><X size={14} /></button>
+                </div>
+            )}
 
             {/* ── Manual Transaction Form ── */}
             {showManualTxForm && (
@@ -4228,7 +5108,13 @@ ${financialContext}`;
                                         </div>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
-                                        <button onClick={() => editDebt(d)} className="text-slate-500 hover:text-emerald-400 transition-colors" title="Edit"><FileText size={15} /></button>
+                                        <button onClick={() => {
+                                            setDebtCelebration({ name: d.name, amount: Number(d.amount) });
+                                            setTimeout(() => { removeDebt(d.id); setDebtCelebration(null); }, 2400);
+                                        }} className="text-slate-500 hover:text-emerald-400 transition-colors" title="Mark as paid off">
+                                            <CheckCircle size={15} />
+                                        </button>
+                                        <button onClick={() => editDebt(d)} className="text-slate-500 hover:text-cyan-400 transition-colors" title="Edit"><FileText size={15} /></button>
                                         <button onClick={() => removeDebt(d.id)} className="text-slate-500 hover:text-rose-400 transition-colors" title="Delete"><Trash2 size={15} /></button>
                                     </div>
                                 </div>
@@ -4286,6 +5172,150 @@ ${financialContext}`;
                         <p className="text-xs text-slate-400 uppercase tracking-wider">Items</p>
                         <p className="font-mono text-xl text-white font-bold">{debts.length}</p>
                     </div>
+                </div>
+            )}
+
+            {/* ── ATTACK THIS FIRST ── */}
+            {debtStrategies && debts.length > 0 && (() => {
+                const target = [...debts].filter(d => Number(d.amount) > 0 && Number(d.interestRate) > 0).sort((a, b) => Number(b.interestRate) - Number(a.interestRate))[0]
+                    || [...debts].filter(d => Number(d.amount) > 0).sort((a, b) => Number(b.amount) - Number(a.amount))[0];
+                if (!target) return null;
+                const bal = Number(target.amount);
+                const rate = Number(target.interestRate) / 100 / 12;
+                const currentPmt = Number(target.monthlyPayment) || Number(target.minimumPayment) || 0;
+                const recommended = Math.max(currentPmt, Math.round(currentPmt + Math.max(0, savingsData.canSave) * 0.7));
+                const moPayoffRec = (() => {
+                    if (recommended <= 0) return null;
+                    if (rate <= 0) return Math.ceil(bal / recommended);
+                    if (recommended <= bal * rate) return null;
+                    return Math.ceil(-Math.log(1 - (rate * bal / recommended)) / Math.log(1 + rate));
+                })();
+                const monthlySavings = recommended - currentPmt;
+                const payoffDate = moPayoffRec ? new Date(Date.now() + moPayoffRec * 30.44 * 86400000).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' }) : null;
+                return (
+                    <div className="glass-card p-6 border border-rose-500/25" style={{ boxShadow: '0 0 28px rgba(255,92,122,0.08)' }}>
+                        <div className="flex items-center gap-2 mb-4">
+                            <span className="text-lg">🎯</span>
+                            <h3 className="text-base font-semibold text-white">Attack This First</h3>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/25 font-medium ml-1">Recommended</span>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                            <div className="flex-1 space-y-2">
+                                <div>
+                                    <p className="text-xl font-bold text-white">{target.name}</p>
+                                    <p className="text-sm text-slate-400 mt-0.5">
+                                        {fmt(bal)} balance
+                                        {Number(target.interestRate) > 0 && <span className="text-rose-400 font-mono ml-2">{target.interestRate}% APR</span>}
+                                        {target.lender && <span className="text-slate-500"> · {target.lender}</span>}
+                                    </p>
+                                </div>
+                                <div className="flex flex-wrap gap-4 text-sm">
+                                    <div>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Current payment</p>
+                                        <p className="font-mono text-white font-semibold">{fmt(currentPmt)}/mo</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Recommended payment</p>
+                                        <p className="font-mono text-emerald-400 font-semibold">{fmt(recommended)}/mo</p>
+                                    </div>
+                                    {payoffDate && (
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Debt-free by</p>
+                                            <p className="font-mono text-cyan-400 font-semibold">{payoffDate}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            {monthlySavings > 0 && (
+                                <div className="shrink-0 p-4 bg-emerald-500/8 border border-emerald-500/20 rounded-2xl text-center">
+                                    <p className="text-[10px] text-emerald-400/70 uppercase tracking-wider mb-1">Extra to add</p>
+                                    <p className="text-2xl font-bold font-mono text-emerald-400">+{fmt(monthlySavings)}</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">per month</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-white/[0.05]">
+                            <p className="text-xs text-slate-500">
+                                <span className="text-white font-medium">This week:</span> Log into your bank and increase the automatic payment on {target.name} to {fmt(recommended)}/mo.
+                                {Number(target.interestRate) > 0 && ` At ${target.interestRate}% APR, every extra dollar is a guaranteed ${target.interestRate}% return.`}
+                            </p>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ── "What If I Pay Extra?" Scenario Calculator ── */}
+            {debts.length > 0 && totalDebtBalance > 0 && (
+                <div className="glass-card p-6 space-y-4">
+                    <div className="flex items-center gap-2">
+                        <span className="text-lg">🧮</span>
+                        <h3 className="text-base font-semibold text-white">What If I Pay Extra?</h3>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-sm text-slate-400">If I add</span>
+                        <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                            <input type="number" min="0" placeholder="100"
+                                value={extraPaymentInput}
+                                onChange={e => setExtraPaymentInput(e.target.value)}
+                                className="w-28 bg-surface-light border border-white/15 rounded-xl pl-7 pr-3 py-2 text-sm text-white placeholder:text-slate-500 font-mono focus:outline-none focus:border-emerald-500/50" />
+                        </div>
+                        <span className="text-sm text-slate-400">extra per month across my debts…</span>
+                    </div>
+                    {(() => {
+                        const extra = parseFloat(extraPaymentInput) || 0;
+                        if (extra <= 0) return (
+                            <p className="text-xs text-slate-500 italic">Enter an extra monthly amount to see how much time and interest you'd save.</p>
+                        );
+                        // Simulate payoff with and without extra, applying extra to highest-rate debt first
+                        const simulate = (extraPerMonth) => {
+                            let debtsCopy = debts.filter(d => Number(d.amount) > 0).map(d => ({ ...d, remaining: Number(d.amount) }))
+                                .sort((a, b) => Number(b.interestRate) - Number(a.interestRate));
+                            let totalInterest = 0, month = 0;
+                            const maxMonths = 600;
+                            while (debtsCopy.some(d => d.remaining > 0.10) && month < maxMonths) {
+                                month++;
+                                let extraLeft = extraPerMonth;
+                                debtsCopy = debtsCopy.map(d => {
+                                    if (d.remaining <= 0.10) return d;
+                                    const interest = d.remaining * (Number(d.interestRate) / 100 / 12);
+                                    totalInterest += interest;
+                                    const pmt = Math.min(d.remaining + interest, (Number(d.monthlyPayment) || 0));
+                                    const extraApplied = Math.min(extraLeft, d.remaining + interest - pmt);
+                                    extraLeft = Math.max(0, extraLeft - extraApplied);
+                                    return { ...d, remaining: Math.max(0, d.remaining + interest - pmt - extraApplied) };
+                                });
+                            }
+                            return { months: month >= maxMonths ? 999 : month, totalInterest };
+                        };
+                        const baseline = simulate(0);
+                        const withExtra = simulate(extra);
+                        if (baseline.months >= 999 && withExtra.months >= 999) return <p className="text-xs text-amber-400">Debt payoff estimate unavailable — check your payment amounts.</p>;
+                        const monthsSaved = Math.max(0, baseline.months - withExtra.months);
+                        const interestSaved = Math.max(0, baseline.totalInterest - withExtra.totalInterest);
+                        const newFreeDate = withExtra.months < 999 ? new Date(Date.now() + withExtra.months * 30.44 * 86400000).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' }) : null;
+                        return (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                                <div className="rounded-xl bg-emerald-500/8 border border-emerald-500/20 p-4 text-center">
+                                    <p className="text-[10px] text-emerald-400/70 uppercase tracking-wider mb-1">Months saved</p>
+                                    <p className="text-2xl font-bold font-mono text-emerald-400">{monthsSaved > 0 ? monthsSaved : '<1'}</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">
+                                        {withExtra.months < 999 ? `${withExtra.months} mo total` : 'still long-term'}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl bg-sky-500/8 border border-sky-500/20 p-4 text-center">
+                                    <p className="text-[10px] text-sky-400/70 uppercase tracking-wider mb-1">Interest saved</p>
+                                    <p className="text-2xl font-bold font-mono text-sky-400">{fmt(interestSaved)}</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">over the life of debts</p>
+                                </div>
+                                <div className="rounded-xl bg-white/5 border border-white/10 p-4 text-center">
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">New debt-free date</p>
+                                    <p className="text-base font-bold text-white">{newFreeDate || 'N/A'}</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">vs. {baseline.months < 999 ? new Date(Date.now() + baseline.months * 30.44 * 86400000).toLocaleDateString('en-CA', { month: 'short', year: 'numeric' }) : 'unknown'} at current rate</p>
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             )}
 
@@ -4356,6 +5386,346 @@ ${financialContext}`;
             )}
         </div>
     );
+
+    /* ═══════════════════════════════════════
+       RENDER — MY FINANCES TAB (Accounts + Debts merged)
+       ═══════════════════════════════════════ */
+    const renderFinances = () => (
+        <div className="space-y-2 animate-fade-in">
+            {/* Sub-tab switcher */}
+            <div className="flex gap-1 p-1 bg-white/5 rounded-xl w-fit mb-4">
+                {[{ id: 'accounts', label: 'Accounts & Transactions' }, { id: 'debts', label: 'Debts & Loans' }, { id: 'subscriptions', label: 'Subscriptions' }].map(st => (
+                    <button key={st.id} onClick={() => setFinancesSubTab(st.id)}
+                        className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${financesSubTab === st.id ? 'bg-white/10 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
+                        {st.label}
+                        {st.id === 'subscriptions' && recurringPayments.length > 0 && (
+                            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400">{recurringPayments.length}</span>
+                        )}
+                    </button>
+                ))}
+            </div>
+            {financesSubTab === 'accounts' && renderTransactions()}
+            {financesSubTab === 'debts' && renderDebts()}
+            {financesSubTab === 'subscriptions' && (() => {
+                const monthly = recurringPayments.filter(r => r.frequency === 'Monthly');
+                const biweekly = recurringPayments.filter(r => r.frequency === 'Bi-weekly');
+                const weekly = recurringPayments.filter(r => r.frequency === 'Weekly');
+                const other = recurringPayments.filter(r => !['Monthly','Bi-weekly','Weekly'].includes(r.frequency));
+                const totalMonthly = monthly.reduce((s, r) => s + r.avgAmount, 0)
+                    + biweekly.reduce((s, r) => s + r.avgAmount * 26 / 12, 0)
+                    + weekly.reduce((s, r) => s + r.avgAmount * 52 / 12, 0);
+                const KNOWN_SUBS = ['netflix','spotify','apple','amazon','disney','hulu','youtube','gym','adobe','dropbox','microsoft','google','crunchyroll','paramount','crave','tidal','audible'];
+                const flagged = monthly.filter(r => KNOWN_SUBS.some(s => r.merchant.toLowerCase().includes(s)));
+                return (
+                    <div className="space-y-4 animate-fade-in">
+                        {/* Summary header */}
+                        <div className="glass-card p-5">
+                            <div className="flex items-center justify-between mb-4">
+                                <div>
+                                    <h2 className="text-lg font-bold text-white">Subscription & Recurring Hub</h2>
+                                    <p className="text-xs text-slate-400 mt-0.5">{recurringPayments.length} recurring charges detected across all accounts</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">Est. Monthly Total</p>
+                                    <p className="font-mono text-xl font-bold text-rose-400">{fmt(totalMonthly)}</p>
+                                    <p className="text-[10px] text-slate-600">{fmt(totalMonthly * 12)}/year</p>
+                                </div>
+                            </div>
+                            {flagged.length > 0 && (
+                                <div className="p-3 bg-amber-500/8 border border-amber-500/20 rounded-xl">
+                                    <p className="text-xs text-amber-300 font-medium mb-1">💡 Review these streaming/subscription services</p>
+                                    <p className="text-[11px] text-slate-400">Found: {flagged.map(f => f.merchant).join(', ')} — {fmt(flagged.reduce((s,f) => s + f.avgAmount, 0))}/mo combined. Cancel any unused ones.</p>
+                                </div>
+                            )}
+                        </div>
+                        {/* Recurring by frequency */}
+                        {[
+                            { label: 'Monthly', items: monthly, perMonth: 1 },
+                            { label: 'Bi-weekly', items: biweekly, perMonth: 26/12 },
+                            { label: 'Weekly', items: weekly, perMonth: 52/12 },
+                            { label: 'Other', items: other, perMonth: 1 },
+                        ].filter(g => g.items.length > 0).map(group => (
+                            <div key={group.label} className="glass-card p-5">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold text-white">{group.label}</h3>
+                                    <span className="text-[11px] text-slate-500 font-mono">{fmt(group.items.reduce((s,r) => s + r.avgAmount * group.perMonth, 0))}/mo</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                    {group.items.map((rp, i) => {
+                                        const isFlagged = KNOWN_SUBS.some(s => rp.merchant.toLowerCase().includes(s));
+                                        const monthlyEq = rp.avgAmount * group.perMonth;
+                                        return (
+                                            <div key={i} className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${isFlagged ? 'bg-amber-500/5 border-amber-500/15' : 'bg-white/[0.02] border-white/5'}`}>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-sm text-slate-200 truncate">{rp.merchant}</p>
+                                                        {isFlagged && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/25 shrink-0">review</span>}
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-500">{rp.category} · {rp.occurrences} charges detected</p>
+                                                </div>
+                                                <div className="text-right shrink-0 ml-3">
+                                                    <p className="font-mono text-sm text-rose-400 font-medium">{fmt(rp.avgAmount)}</p>
+                                                    {group.perMonth !== 1 && <p className="text-[10px] text-slate-600">{fmt(monthlyEq)}/mo eq</p>}
+                                                    <p className="text-[10px] text-slate-600">{fmt(rp.avgAmount * 12)}/yr</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                        {recurringPayments.length === 0 && (
+                            <div className="glass-card p-10 text-center">
+                                <p className="text-slate-400">No recurring charges detected yet.</p>
+                                <p className="text-xs text-slate-500 mt-1">Import at least 2–3 months of transactions to detect patterns.</p>
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
+        </div>
+    );
+
+    /* ═══════════════════════════════════════
+       RENDER — LEDGER TAB
+       ═══════════════════════════════════════ */
+    const renderLedger = () => {
+        if (transactions.length === 0) return (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+                <FileText size={48} className="text-slate-600 mb-4" />
+                <h2 className="text-xl font-bold text-white mb-2">Ledger is Empty</h2>
+                <p className="text-slate-400 text-sm max-w-sm mb-4">Import your bank files in My Finances to see every transaction here.</p>
+                <button onClick={() => setActiveTab('finances')} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-sm font-semibold rounded-lg transition-all">Go to My Finances</button>
+            </div>
+        );
+
+        // Build per-account starting balances (currentBal - sum of all tx)
+        const acctStartBals = {};
+        accounts.forEach(acc => {
+            const txs = transactions.filter(t => t.accountId === acc.id).sort((a, b) => a.date.localeCompare(b.date));
+            const currentBal = Number(accountBalances[acc.id]) || 0;
+            const sumAll = txs.reduce((s, t) => s + t.amount, 0);
+            acctStartBals[acc.id] = currentBal - sumAll;
+        });
+
+        // Sort all transactions oldest → newest, assign running balance per account
+        const runMap = { ...acctStartBals };
+        const allRows = [...transactions]
+            .sort((a, b) => { const dc = a.date.localeCompare(b.date); return dc !== 0 ? dc : (a.id || '').localeCompare(b.id || ''); })
+            .map(tx => {
+                runMap[tx.accountId] = (runMap[tx.accountId] || 0) + tx.amount;
+                const acc = accounts.find(a => a.id === tx.accountId);
+                return { ...tx, accountName: acc?.accountName || 'Unknown', accountType: acc?.accountType || 'chequing', runningBalance: runMap[tx.accountId] };
+            });
+
+        // Filter
+        const filtered = allRows.filter(r => {
+            if (txSearch && !r.description.toLowerCase().includes(txSearch.toLowerCase()) && !r.accountName.toLowerCase().includes(txSearch.toLowerCase())) return false;
+            if (txCatFilter !== 'All' && r.category !== txCatFilter) return false;
+            if (txDateFrom && r.date < txDateFrom) return false;
+            if (txDateTo && r.date > txDateTo) return false;
+            return true;
+        });
+
+        const totalPages = Math.ceil(filtered.length / TX_PER_PAGE);
+        const paginated = filtered.slice(txPage * TX_PER_PAGE, (txPage + 1) * TX_PER_PAGE);
+
+        // Totals for filtered set
+        const filteredDebit = filtered.filter(r => r.amount < 0).reduce((s, r) => s + Math.abs(r.amount), 0);
+        const filteredCredit = filtered.filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0);
+
+        return (
+            <div className="space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                        <h1 className="text-xl font-bold text-white">Full Ledger</h1>
+                        <p className="text-xs text-slate-400 mt-0.5">{filtered.length.toLocaleString()} of {allRows.length.toLocaleString()} entries · all accounts</p>
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                        <input value={txSearch} onChange={e => { setTxSearch(e.target.value); setTxPage(0); }}
+                            placeholder="Search…" className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none w-40" />
+                        <select value={txCatFilter} onChange={e => { setTxCatFilter(e.target.value); setTxPage(0); }}
+                            className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300 focus:outline-none">
+                            <option value="All">All Categories</option>
+                            {CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                        </select>
+                        <input type="date" value={txDateFrom} onChange={e => { setTxDateFrom(e.target.value); setTxPage(0); }}
+                            className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300 focus:outline-none" />
+                        <input type="date" value={txDateTo} onChange={e => { setTxDateTo(e.target.value); setTxPage(0); }}
+                            className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300 focus:outline-none" />
+                        {(txSearch || txCatFilter !== 'All' || txDateFrom || txDateTo) && (
+                            <button onClick={() => { setTxSearch(''); setTxCatFilter('All'); setTxDateFrom(''); setTxDateTo(''); setTxPage(0); }}
+                                className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-slate-400">Clear</button>
+                        )}
+                        <button
+                            onClick={() => {
+                                const headers = ['Date','Description','Account','Category','Debit','Credit','Balance'];
+                                const rows = filtered.map(r => [
+                                    r.date,
+                                    `"${(r.description||'').replace(/"/g,'""')}"`,
+                                    `"${(r.accountName||'').replace(/"/g,'""')}"`,
+                                    r.category,
+                                    r.amount < 0 ? Math.abs(r.amount).toFixed(2) : '',
+                                    r.amount > 0 ? r.amount.toFixed(2) : '',
+                                    r.runningBalance.toFixed(2)
+                                ]);
+                                const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+                                const blob = new Blob([csv], { type: 'text/csv' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a'); a.href = url; a.download = 'ledger-export.csv'; a.click();
+                                URL.revokeObjectURL(url);
+                            }}
+                            className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 rounded-lg text-xs text-emerald-400 font-medium transition-all flex items-center gap-1.5">
+                            ↓ Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                {/* Summary row */}
+                <div className="grid grid-cols-3 gap-3">
+                    {[
+                        { label: 'Total Debits', val: filteredDebit, color: 'text-rose-400' },
+                        { label: 'Total Credits', val: filteredCredit, color: 'text-emerald-400' },
+                        { label: 'Net', val: filteredCredit - filteredDebit, color: filteredCredit - filteredDebit >= 0 ? 'text-emerald-400' : 'text-rose-400' },
+                    ].map(s => (
+                        <div key={s.label} className="glass-card px-4 py-3">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{s.label}</p>
+                            <p className={`text-base font-bold font-mono ${s.color}`}>{fmt(Math.abs(s.val))}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Balance Reconciliation Panel */}
+                {accounts.length > 0 && (() => {
+                    const reconcile = accounts.map(acc => {
+                        const txs = transactions.filter(t => t.accountId === acc.id);
+                        const setBalance = Number(accountBalances[acc.id]);
+                        const hasBalance = !isNaN(setBalance) && accountBalances[acc.id] !== undefined && accountBalances[acc.id] !== '';
+                        const lastRunning = allRows.filter(r => r.accountId === acc.id).at(-1)?.runningBalance;
+                        const diff = hasBalance && lastRunning !== undefined ? lastRunning - setBalance : null;
+                        const balanced = diff === null ? null : Math.abs(diff) < 0.005;
+                        return { acc, txCount: txs.length, setBalance, lastRunning, diff, balanced, hasBalance };
+                    }).filter(r => r.txCount > 0 || r.hasBalance);
+                    const allBalanced = reconcile.every(r => r.balanced !== false);
+                    const issueCount = reconcile.filter(r => r.balanced === false).length;
+                    return (
+                        <div className="glass-card p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="text-sm">{allBalanced ? '✅' : '⚠️'}</span>
+                                <h3 className="text-sm font-semibold text-white">Balance Reconciliation</h3>
+                                {!allBalanced && <span className="ml-auto text-[10px] text-rose-400 font-medium">{issueCount} account{issueCount !== 1 ? 's' : ''} out of balance</span>}
+                                {allBalanced && <span className="ml-auto text-[10px] text-emerald-400 font-medium">All accounts balanced</span>}
+                            </div>
+                            <div className="space-y-2">
+                                {reconcile.map(({ acc, txCount, setBalance, lastRunning, diff, balanced, hasBalance }) => (
+                                    <div key={acc.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-xs ${balanced === false ? 'border-rose-500/25 bg-rose-500/5' : balanced === true ? 'border-emerald-500/15 bg-emerald-500/[0.03]' : 'border-white/5 bg-white/[0.02]'}`}>
+                                        <div className="flex-1 min-w-0">
+                                            <span className="font-medium text-slate-200 truncate block">{acc.accountName}</span>
+                                            <span className="text-slate-500">{txCount} transactions</span>
+                                        </div>
+                                        {hasBalance ? (
+                                            <>
+                                                <div className="text-right shrink-0">
+                                                    <p className="text-slate-400 text-[10px]">Set balance</p>
+                                                    <p className="font-mono text-slate-300">{fmt(setBalance)}</p>
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <p className="text-slate-400 text-[10px]">Computed</p>
+                                                    <p className={`font-mono ${lastRunning !== undefined ? (balanced ? 'text-emerald-400' : 'text-rose-400') : 'text-slate-500'}`}>
+                                                        {lastRunning !== undefined ? fmt(lastRunning) : 'No txns'}
+                                                    </p>
+                                                </div>
+                                                {diff !== null && Math.abs(diff) >= 0.005 && (
+                                                    <div className="text-right shrink-0">
+                                                        <p className="text-rose-400 text-[10px]">Discrepancy</p>
+                                                        <p className="font-mono text-rose-400">{diff > 0 ? '+' : ''}{fmt(diff)}</p>
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <span className="text-slate-600 text-[10px] shrink-0">No balance set — go to My Finances</span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                            {!allBalanced && <p className="text-[10px] text-slate-600 mt-2">Discrepancies may be due to missing transactions, opening balance not matching, or transactions from before the import period.</p>}
+                        </div>
+                    );
+                })()}
+
+                {/* Table */}
+                <div className="glass-card overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr className="border-b border-white/10 bg-white/[0.02]">
+                                    <th className="text-left px-3 py-3 text-slate-400 font-medium w-24">Date</th>
+                                    <th className="text-left px-3 py-3 text-slate-400 font-medium">Description</th>
+                                    <th className="text-left px-3 py-3 text-slate-400 font-medium w-32 hidden md:table-cell">Account</th>
+                                    <th className="text-left px-3 py-3 text-slate-400 font-medium w-28 hidden sm:table-cell">Category</th>
+                                    <th className="text-right px-3 py-3 text-slate-400 font-medium w-24">Debit</th>
+                                    <th className="text-right px-3 py-3 text-slate-400 font-medium w-24">Credit</th>
+                                    <th className="text-right px-3 py-3 text-slate-400 font-medium w-28">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(() => {
+                                    let lastMonth = null;
+                                    return paginated.flatMap((row, i) => {
+                                        const rowMonth = row.date.slice(0, 7);
+                                        const monthLabel = new Date(rowMonth + '-02').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                                        const isNewMonth = rowMonth !== lastMonth;
+                                        lastMonth = rowMonth;
+                                        const cat = CATEGORIES.find(c => c.name === row.category);
+                                        const monthDebits = isNewMonth ? paginated.filter(r => r.date.slice(0,7) === rowMonth && r.amount < 0).reduce((s,r) => s + Math.abs(r.amount), 0) : 0;
+                                        const monthCredits = isNewMonth ? paginated.filter(r => r.date.slice(0,7) === rowMonth && r.amount > 0).reduce((s,r) => s + r.amount, 0) : 0;
+                                        return [
+                                            isNewMonth && (
+                                                <tr key={`sep-${rowMonth}`} className="bg-white/[0.025] border-y border-white/[0.07]">
+                                                    <td colSpan={4} className="px-3 py-2">
+                                                        <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">{monthLabel}</span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right font-mono text-[11px] text-rose-400/80">{monthDebits > 0 ? fmt(monthDebits) : ''}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-[11px] text-emerald-400/80">{monthCredits > 0 ? fmt(monthCredits) : ''}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-[11px] text-slate-500">{fmt(monthCredits - monthDebits)}</td>
+                                                </tr>
+                                            ),
+                                            <tr key={row.id || i} className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors">
+                                                <td className="px-3 py-2 text-slate-500 font-mono text-[11px]">{row.date}</td>
+                                                <td className="px-3 py-2 text-slate-200 max-w-[180px]"><span className="truncate block">{row.description}</span></td>
+                                                <td className="px-3 py-2 text-slate-400 hidden md:table-cell"><span className="truncate block max-w-[110px]">{row.accountName}</span></td>
+                                                <td className="px-3 py-2 hidden sm:table-cell">
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: cat?.color || '#94a3b8', background: (cat?.color || '#94a3b8') + '22' }}>{row.category}</span>
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-mono">
+                                                    {row.amount < 0 ? <span className="text-rose-400">{fmt(Math.abs(row.amount))}</span> : <span className="text-slate-700">—</span>}
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-mono">
+                                                    {row.amount > 0 ? <span className="text-emerald-400">{fmt(row.amount)}</span> : <span className="text-slate-700">—</span>}
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-mono">
+                                                    <span className={row.runningBalance >= 0 ? 'text-slate-300' : 'text-rose-400'}>{fmt(row.runningBalance)}</span>
+                                                </td>
+                                            </tr>
+                                        ].filter(Boolean);
+                                    });
+                                })()}
+                            </tbody>
+                        </table>
+                    </div>
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-white/10">
+                            <span className="text-xs text-slate-500">{txPage * TX_PER_PAGE + 1}–{Math.min((txPage + 1) * TX_PER_PAGE, filtered.length)} of {filtered.length}</span>
+                            <div className="flex gap-2">
+                                <button disabled={txPage === 0} onClick={() => setTxPage(p => p - 1)} className="px-3 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-30 rounded text-xs text-slate-300">Prev</button>
+                                <button disabled={txPage >= totalPages - 1} onClick={() => setTxPage(p => p + 1)} className="px-3 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-30 rounded text-xs text-slate-300">Next</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
 
     /* ═══════════════════════════════════════
        RENDER — SAVINGS PLAN TAB
@@ -4471,9 +5841,11 @@ ${financialContext}`;
                                     const remaining = Math.max(0, goal.target - goal.current);
                                     const monthsNeeded = savingsData.canSave > 0 && remaining > 0 ? Math.ceil(remaining / savingsData.canSave) : null;
                                     const projDate = monthsNeeded ? new Date(Date.now() + monthsNeeded * 30.44 * 86400000) : null;
+                                    const deadlineDate = goal.deadline ? new Date(goal.deadline + '-28') : null;
                                     const isOnTrack = goal.deadline && projDate
                                         ? projDate <= new Date(goal.deadline + '-01')
                                         : null;
+                                    const isPastDue = deadlineDate && new Date() > deadlineDate && pct < 100;
                                     return (
                                         <div key={goal.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-4">
                                             <div className="flex items-start justify-between mb-3">
@@ -4488,17 +5860,30 @@ ${financialContext}`;
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    {isOnTrack !== null && (
-                                                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${isOnTrack ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                                                            {isOnTrack ? '✓ On Track' : '⚠ Behind'}
+                                                    {isPastDue ? (
+                                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/25">
+                                                            🚨 Past Due
+                                                        </span>
+                                                    ) : isOnTrack !== null && (
+                                                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${isOnTrack ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                                                            {isOnTrack ? '✓ On Track' : '⚠ At Risk'}
                                                         </span>
                                                     )}
                                                     <button onClick={() => editGoal(goal)} className="text-slate-500 hover:text-slate-300 transition-colors"><Target size={14} /></button>
                                                     <button onClick={() => removeGoal(goal.id)} className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
                                                 </div>
                                             </div>
-                                            <div className="h-3 bg-slate-700 rounded-full overflow-hidden mb-2">
+                                            {/* Milestone markers */}
+                                            <div className="relative h-3 bg-slate-700 rounded-full overflow-hidden mb-1">
                                                 <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-700" style={{ width: `${pct}%` }} />
+                                                {[25, 50, 75].map(m => (
+                                                    <div key={m} className="absolute top-0 bottom-0 w-px bg-white/20" style={{ left: `${m}%` }} />
+                                                ))}
+                                            </div>
+                                            <div className="flex justify-between text-[9px] text-slate-700 mb-2 px-0.5">
+                                                {[25, 50, 75, 100].map(m => (
+                                                    <span key={m} style={{ marginLeft: m === 25 ? `${25 - 2}%` : undefined }} className={pct >= m ? 'text-emerald-600' : ''}>{m}%</span>
+                                                ))}
                                             </div>
                                             <div className="flex items-center justify-between text-xs">
                                                 <span className="text-emerald-400 font-mono font-semibold">{pct.toFixed(0)}%</span>
@@ -4508,7 +5893,7 @@ ${financialContext}`;
                                             {/* Quick update current balance */}
                                             <div className="mt-3 flex items-center gap-2">
                                                 <span className="text-[10px] text-slate-500">Update saved:</span>
-                                                <input type="number" defaultValue={goal.current} key={goal.current}
+                                                <input type="number" defaultValue={goal.current} key={goal.id}
                                                     onBlur={e => updateGoalProgress(goal.id, e.target.value)}
                                                     className="w-28 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-emerald-500/50" />
                                             </div>
@@ -4518,6 +5903,66 @@ ${financialContext}`;
                             </div>
                         )}
                     </div>
+
+                    {/* ── Section 2b: Savings Constraint Analyzer ── */}
+                    {savingsGoals.length > 0 && transactions.length > 0 && (() => {
+                        const totalGoalMonthly = savingsGoals.reduce((s, g) => {
+                            if (!g.deadline || !g.target) return s;
+                            const remaining = Math.max(0, Number(g.target) - Number(g.current));
+                            const monthsLeft = Math.max(1, (new Date(g.deadline + '-01') - new Date()) / (30.44 * 86400000));
+                            return s + remaining / monthsLeft;
+                        }, 0);
+                        if (totalGoalMonthly <= 0) return null;
+                        const gap = totalGoalMonthly - savingsData.canSave;
+                        const topCuttable = [...categoryData]
+                            .filter(c => ['Food & Dining','Shopping','Entertainment','Subscriptions','Transport'].includes(c.name))
+                            .sort((a, b) => b.monthly - a.monthly)
+                            .slice(0, 4);
+                        return (
+                            <div className="glass-card p-5">
+                                <div className="flex items-center gap-2 mb-4">
+                                    <span className="text-base">🔍</span>
+                                    <h3 className="text-base font-semibold text-white">Savings Constraint Analyzer</h3>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                    <div className="rounded-xl bg-white/[0.03] border border-white/8 p-3 text-center">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Needed for goals</p>
+                                        <p className="font-mono text-lg font-bold text-amber-400">{fmt(totalGoalMonthly)}/mo</p>
+                                    </div>
+                                    <div className={`rounded-xl p-3 text-center border ${savingsData.canSave >= totalGoalMonthly ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-rose-500/8 border-rose-500/20'}`}>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Available to save</p>
+                                        <p className={`font-mono text-lg font-bold ${savingsData.canSave >= totalGoalMonthly ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(savingsData.canSave)}/mo</p>
+                                    </div>
+                                </div>
+                                {gap > 0 ? (
+                                    <>
+                                        <p className="text-xs text-rose-300 mb-3">You're <span className="font-mono font-bold">{fmt(gap)}/mo</span> short of your goals. Here's what's in the way:</p>
+                                        <div className="space-y-2">
+                                            {topCuttable.map(cat => {
+                                                const cut25 = cat.monthly * 0.25;
+                                                const catColor = CATEGORIES.find(c => c.name === cat.name)?.color || '#94a3b8';
+                                                return (
+                                                    <div key={cat.name} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.02] border border-white/5">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-2 h-2 rounded-full" style={{ background: catColor }} />
+                                                            <span className="text-xs text-slate-300">{cat.name}</span>
+                                                            <span className="text-[10px] text-slate-600 font-mono">{fmt(cat.monthly)}/mo</span>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <span className="text-xs text-emerald-400 font-mono">−25% = +{fmt(cut25)}/mo freed</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 mt-3">Cutting these 4 categories by 25% would free up {fmt(topCuttable.reduce((s,c) => s + c.monthly * 0.25, 0))}/mo — {fmt(topCuttable.reduce((s,c) => s + c.monthly * 0.25, 0)) >= fmt(gap) ? 'enough' : 'still not quite enough'} to cover your gap.</p>
+                                    </>
+                                ) : (
+                                    <p className="text-xs text-emerald-400">✓ Your current surplus is enough to fund all your goals on schedule.</p>
+                                )}
+                            </div>
+                        );
+                    })()}
 
                     {/* ── Section 3: Financial Priority Stack ── */}
                     <div className="glass-card p-6">
@@ -4579,10 +6024,13 @@ ${financialContext}`;
                                             <span className="text-emerald-400 font-mono text-lg font-bold">+{fmt(cut.freed)}/mo</span>
                                             <span className="text-xs text-slate-500">freed at 25% cut</span>
                                         </div>
-                                        {cut.monthsFaster.length > 0 && (
-                                            <div className="space-y-1">
+                                        {(cut.debtFaster?.length > 0 || cut.monthsFaster.length > 0) && (
+                                            <div className="space-y-1 mt-1">
+                                                {cut.debtFaster?.filter(m => m.fasterBy > 0).map((m, j) => (
+                                                    <p key={`d${j}`} className="text-[10px] text-amber-400">💳 {m.name} debt-free {m.fasterBy} mo sooner</p>
+                                                ))}
                                                 {cut.monthsFaster.filter(m => m.fasterBy > 0).map((m, j) => (
-                                                    <p key={j} className="text-[10px] text-cyan-400">→ {m.name}: {m.fasterBy} mo faster</p>
+                                                    <p key={`s${j}`} className="text-[10px] text-cyan-400">🎯 {m.name}: goal {m.fasterBy} mo faster</p>
                                                 ))}
                                             </div>
                                         )}
@@ -4672,6 +6120,54 @@ ${financialContext}`;
                         </div>
                     )}
 
+                    {/* ── Scenario Table ── */}
+                    {savingsData.canSave > 0 && scenarioData.length > 0 && (
+                        <div className="glass-card p-6">
+                            <h3 className="text-base font-semibold text-white mb-1">⚡ What If You Saved More?</h3>
+                            <p className="text-xs text-slate-500 mb-4">How small increases to your monthly savings accelerate every milestone.</p>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                    <thead>
+                                        <tr className="border-b border-white/[0.06]">
+                                            <th className="text-left text-[10px] text-slate-500 uppercase tracking-wider pb-2 font-semibold">Extra/mo</th>
+                                            <th className="text-right text-[10px] text-slate-500 uppercase tracking-wider pb-2 font-semibold">Total saved/mo</th>
+                                            <th className="text-right text-[10px] text-slate-500 uppercase tracking-wider pb-2 font-semibold">3-mo fund</th>
+                                            <th className="text-right text-[10px] text-slate-500 uppercase tracking-wider pb-2 font-semibold">6-mo fund</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {scenarioData.map((row, i) => {
+                                            const isCurrentSlider = row.extra === extraSavings && extraSavings > 0;
+                                            const isBaseline = row.extra === 0;
+                                            return (
+                                                <tr key={i} className={`border-b border-white/[0.04] transition-colors ${isCurrentSlider ? 'bg-amber-500/8' : isBaseline ? 'bg-white/[0.02]' : 'hover:bg-white/[0.02]'}`}>
+                                                    <td className="py-2.5">
+                                                        <span className={`font-mono font-semibold ${isCurrentSlider ? 'text-amber-400' : isBaseline ? 'text-slate-500' : 'text-emerald-400'}`}>
+                                                            {row.extra === 0 ? 'No change' : `+${fmt(row.extra)}`}
+                                                        </span>
+                                                        {isBaseline && <span className="ml-2 text-[9px] text-slate-600">baseline</span>}
+                                                        {isCurrentSlider && <span className="ml-2 text-[9px] text-amber-500">← slider</span>}
+                                                    </td>
+                                                    <td className="text-right py-2.5 font-mono text-slate-200">{fmt(row.totalMonthly)}</td>
+                                                    <td className="text-right py-2.5">
+                                                        <span className={`font-mono ${row.months3 ? 'text-cyan-400' : 'text-slate-600'}`}>
+                                                            {row.months3 ? `${row.months3} mo` : '—'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="text-right py-2.5">
+                                                        <span className={`font-mono ${row.months6 ? 'text-violet-400' : 'text-slate-600'}`}>
+                                                            {row.months6 ? `${row.months6} mo` : '—'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── Section 7: Fixed Monthly Bills ── */}
                     {recurringPayments.filter(r => r.frequency === 'Monthly').length > 0 && (
                         <div className="glass-card p-6">
@@ -4714,11 +6210,44 @@ ${financialContext}`;
                         <h3 className="text-sm font-semibold text-white">Financial Advisor AI</h3>
                         <p className="text-xs text-slate-400">Powered by smart analysis · Your data never leaves your device</p>
                     </div>
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot" />
-                        <span className="text-[10px] text-emerald-400 font-medium">Always online</span>
-                    </div>
+                    <button onClick={() => setShowOllamaGuide(g => !g)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all ${
+                            ollamaOnline === true  ? 'bg-emerald-500/10 border-emerald-500/20' :
+                            ollamaOnline === false ? 'bg-amber-500/10 border-amber-500/25 hover:bg-amber-500/15' :
+                            'bg-slate-500/10 border-slate-500/20'
+                        }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${ollamaOnline === true ? 'bg-emerald-400 pulse-dot' : ollamaOnline === false ? 'bg-amber-400' : 'bg-slate-400 pulse-dot'}`} />
+                        <span className={`text-[10px] font-medium ${ollamaOnline === true ? 'text-emerald-400' : ollamaOnline === false ? 'text-amber-400' : 'text-slate-400'}`}>
+                            {ollamaOnline === true ? 'Ollama connected' : ollamaOnline === false ? 'Offline mode — setup?' : 'Ready'}
+                        </span>
+                    </button>
                 </div>
+                {/* Ollama setup guide — shows when offline or toggled */}
+                {(ollamaOnline === false || showOllamaGuide) && (
+                    <div className="mx-4 mb-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                            <p className="text-xs font-semibold text-amber-300">🤖 Connect Ollama for full AI responses</p>
+                            <button onClick={() => setShowOllamaGuide(false)} className="text-slate-600 hover:text-slate-400 shrink-0"><X size={13} /></button>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">Currently using rule-based analysis. For conversational AI with full context, install Ollama and load the qwen3:8b model.</p>
+                        <div className="space-y-1.5">
+                            {[
+                                { n: 1, label: 'Install Ollama', cmd: 'brew install ollama  (or download from ollama.com)' },
+                                { n: 2, label: 'Start the server', cmd: 'ollama serve' },
+                                { n: 3, label: 'Pull the model', cmd: 'ollama pull qwen3:8b' },
+                            ].map(s => (
+                                <div key={s.n} className="flex items-start gap-2">
+                                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{s.n}</span>
+                                    <div>
+                                        <p className="text-[11px] text-slate-300 font-medium">{s.label}</p>
+                                        <code className="text-[10px] text-amber-300/80 font-mono">{s.cmd}</code>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-3">Your financial data never leaves your device. Ollama runs 100% locally.</p>
+                    </div>
+                )}
 
                 {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -4831,7 +6360,16 @@ ${financialContext}`;
 
     // Debt payoff projection (avalanche)
     const canPayExtra = Math.max(0, savingsData.canSave);
-    let debtsCopy = debts.filter(d => Number(d.amount) > 0).map(d => ({ ...d, remaining: Number(d.amount), rate: Number(d.interestRate) / 100 / 12, minPay: Math.max(Number(d.minimumPayment) || 0, Number(d.monthlyPayment) || 0) })).sort((a, b) => b.rate - a.rate);
+    // Deep-copy so the loop never mutates the original debts state
+    let debtsCopy = debts
+        .filter(d => Number(d.amount) > 0)
+        .map(d => ({
+            id: d.id, name: d.name,
+            remaining: Number(d.amount),
+            rate: Number(d.interestRate) / 100 / 12,
+            minPay: Math.max(Number(d.minimumPayment) || 0, Number(d.monthlyPayment) || 0),
+        }))
+        .sort((a, b) => b.rate - a.rate);
 
     const debtTimeline = [];
     let monthsToDebtFree = 0;
@@ -4839,38 +6377,35 @@ ${financialContext}`;
         let extra = canPayExtra;
         let month = 0;
         const maxMonths = 360;
-        while (debtsCopy.some(d => d.remaining > 0.01) && month < maxMonths) {
+        // Threshold 0.10 avoids floating-point near-zero infinite loops
+        while (debtsCopy.some(d => d.remaining > 0.10) && month < maxMonths) {
             month++;
-            // Apply interest and payments
-            let freedExtra = 0;
+            // Apply monthly interest — new objects each pass (no mutation)
             debtsCopy = debtsCopy.map(d => {
-                if (d.remaining <= 0) return d;
-                const interest = d.remaining * d.rate;
-                d.remaining = d.remaining + interest;
-                return d;
+                if (d.remaining <= 0) return { ...d };
+                return { ...d, remaining: d.remaining + d.remaining * d.rate };
             });
-            // Avalanche: pay minimums, then extra to highest rate
+            // Pay minimums
+            debtsCopy = debtsCopy.map(d => {
+                if (d.remaining <= 0) return { ...d };
+                return { ...d, remaining: Math.max(0, d.remaining - Math.min(d.remaining, d.minPay)) };
+            });
+            // Apply extra to highest-rate debt (avalanche)
             let extraLeft = extra;
-            debtsCopy = debtsCopy.map((d, idx) => {
-                if (d.remaining <= 0) return d;
-                const pay = Math.min(d.remaining, d.minPay);
-                d.remaining = Math.max(0, d.remaining - pay);
-                return d;
-            });
-            // Extra to first non-zero (highest rate)
             for (let i = 0; i < debtsCopy.length; i++) {
-                if (debtsCopy[i].remaining > 0 && extraLeft > 0) {
-                    const pay = Math.min(debtsCopy[i].remaining, extraLeft);
-                    debtsCopy[i].remaining = Math.max(0, debtsCopy[i].remaining - pay);
+                const d = debtsCopy[i];
+                if (d.remaining > 0 && extraLeft > 0) {
+                    const pay = Math.min(d.remaining, extraLeft);
+                    debtsCopy[i] = { ...d, remaining: Math.max(0, d.remaining - pay) };
                     extraLeft -= pay;
                 }
-                // Free up paid-off minimums
+                // Cascade freed minimum from paid-off debt
                 if (debtsCopy[i].remaining <= 0 && debtsCopy[i].minPay > 0) {
                     extra += debtsCopy[i].minPay;
-                    debtsCopy[i].minPay = 0;
+                    debtsCopy[i] = { ...debtsCopy[i], minPay: 0 };
                 }
             }
-            if (debtTimeline.length < maxMonths) debtTimeline.push({ month, totalDebt: debtsCopy.reduce((s, d) => s + Math.max(0, d.remaining), 0) });
+            debtTimeline.push({ month, totalDebt: debtsCopy.reduce((s, d) => s + Math.max(0, d.remaining), 0) });
         }
         monthsToDebtFree = month >= maxMonths ? 999 : month;
     }
@@ -4939,8 +6474,144 @@ ${financialContext}`;
     const freedomDateStr = monthsToFreedom >= 999 ? 'Not yet calculable — add income & debt data' : freedomDate.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
     const dti = healthScore?.dti || 0;
 
+    const exportPDF = async () => {
+        setPdfExporting(true);
+        try {
+            const { jsPDF } = await import('jspdf');
+            const { default: autoTable } = await import('jspdf-autotable');
+            const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+            const pageW = doc.internal.pageSize.getWidth();
+            doc.setFillColor(14, 203, 129);
+            doc.rect(0, 0, pageW, 18, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+            doc.text('Financial Recovery Plan', 14, 12);
+            doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+            doc.text(new Date().toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' }), pageW - 14, 12, { align: 'right' });
+            doc.setTextColor(30, 30, 40); doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+            doc.text(`Recovery Score: ${recoveryPct}%   |   Net Worth: ${fmt(netWorth.net)}   |   Monthly Net: ${fmt(summary.monthlyNet)}   |   Freedom Date: ${freedomDateStr}`, 14, 28);
+            doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+            doc.setTextColor(30, 30, 40);
+            doc.text('Recovery Ladder', 14, 38);
+            autoTable(doc, {
+                startY: 41, head: [['Step', 'Goal', 'Status']],
+                body: priorityStack.steps.map((s, i) => [`${i+1}`, s.label, s.done ? 'Complete' : i === priorityStack.activeStep ? 'Active' : 'Upcoming']),
+                styles: { fontSize: 9, cellPadding: 3 },
+                headStyles: { fillColor: [14, 203, 129], textColor: [255, 255, 255] },
+                columnStyles: { 0: { cellWidth: 15 }, 2: { cellWidth: 30 } },
+            });
+            if (debts.length > 0) {
+                const y = doc.lastAutoTable.finalY + 8;
+                doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 30, 40);
+                doc.text('Debt Summary', 14, y);
+                autoTable(doc, {
+                    startY: y + 3, head: [['Debt', 'Balance', 'Rate', 'Payment/mo']],
+                    body: debts.map(d => [d.name, fmt(d.amount), `${d.interestRate}%`, fmt(d.monthlyPayment)]),
+                    styles: { fontSize: 9, cellPadding: 3 },
+                    headStyles: { fillColor: [225, 29, 72], textColor: [255, 255, 255] },
+                });
+            }
+            const sprintY = (doc.lastAutoTable?.finalY || 100) + 8;
+            if (sprintY < 240) {
+                doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 30, 40);
+                doc.text('Your 30-Day Sprint', 14, sprintY);
+                autoTable(doc, {
+                    startY: sprintY + 3, head: [['Week', 'Action', 'Detail']],
+                    body: sprintActions.map(s => [s.week, s.action, s.detail]),
+                    styles: { fontSize: 8, cellPadding: 3 },
+                    headStyles: { fillColor: [96, 165, 250], textColor: [255, 255, 255] },
+                    columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 55 } },
+                });
+            }
+            doc.save(`financial-recovery-${new Date().toISOString().slice(0, 10)}.pdf`);
+        } catch(e) { console.error('PDF export failed', e); }
+        setPdfExporting(false);
+    };
+
+    // Weekly check-in key (ISO week)
+    const weekKey = (() => {
+        const d = new Date(); const jan1 = new Date(d.getFullYear(), 0, 1);
+        return `${d.getFullYear()}-W${Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7)}`;
+    })();
+    const thisWeekEntry = weeklyCheckin[weekKey];
+    const checkinHistory = Object.entries(weeklyCheckin).sort((a,b) => a[0].localeCompare(b[0])).slice(-8);
+
     return (
         <div className="space-y-6 animate-fade-in">
+
+            {/* ── WEEKLY CHECK-IN ── */}
+            <div className="glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <span className="text-base">📋</span>
+                        <h3 className="text-base font-semibold text-white">Weekly Check-In</h3>
+                        {thisWeekEntry && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/25">Done this week ✓</span>}
+                    </div>
+                    <button onClick={() => setShowWeeklyCheckin(v => !v)} className="text-[11px] text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-all">
+                        {showWeeklyCheckin ? 'Close' : thisWeekEntry ? 'Update' : 'Start Check-In'}
+                    </button>
+                </div>
+                {showWeeklyCheckin && (
+                    <div className="space-y-4 pt-3 border-t border-white/8">
+                        <div>
+                            <p className="text-xs text-slate-400 mb-2">How confident are you feeling about your finances right now?</p>
+                            <div className="flex gap-2">
+                                {[1,2,3,4,5].map(n => (
+                                    <button key={n} onClick={() => setWeeklyCheckinForm(f => ({ ...f, confidence: n }))}
+                                        className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${weeklyCheckinForm.confidence === n ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-slate-500 hover:text-slate-300'}`}>
+                                        {n} {n === 1 ? '😰' : n === 2 ? '😟' : n === 3 ? '😐' : n === 4 ? '🙂' : '💪'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-400 mb-2">Biggest blocker this week? (optional)</p>
+                            <input value={weeklyCheckinForm.blocker} onChange={e => setWeeklyCheckinForm(f => ({ ...f, blocker: e.target.value }))}
+                                placeholder="e.g. unexpected car expense, hard to cut dining out…"
+                                className="w-full bg-surface-light border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500/50" />
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-400 mb-2">One win from this week? (optional)</p>
+                            <input value={weeklyCheckinForm.win} onChange={e => setWeeklyCheckinForm(f => ({ ...f, win: e.target.value }))}
+                                placeholder="e.g. cooked at home 4 times, paid off $200 extra…"
+                                className="w-full bg-surface-light border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500/50" />
+                        </div>
+                        <button
+                            disabled={weeklyCheckinForm.confidence === 0}
+                            onClick={() => {
+                                setWeeklyCheckin(prev => ({ ...prev, [weekKey]: { ...weeklyCheckinForm, date: new Date().toISOString().slice(0,10) } }));
+                                setShowWeeklyCheckin(false);
+                                setWeeklyCheckinForm({ confidence: 0, blocker: '', win: '' });
+                            }}
+                            className="btn-primary px-5 py-2 text-white text-sm disabled:opacity-40">
+                            Save Check-In
+                        </button>
+                    </div>
+                )}
+                {!showWeeklyCheckin && checkinHistory.length > 1 && (
+                    <div className="pt-2">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Confidence trend — last {checkinHistory.length} weeks</p>
+                        <div className="flex items-end gap-1.5 h-10">
+                            {checkinHistory.map(([wk, entry]) => {
+                                const isThisWeek = wk === weekKey;
+                                const h = (entry.confidence / 5) * 100;
+                                const color = entry.confidence >= 4 ? '#0ecb81' : entry.confidence >= 3 ? '#f59e0b' : '#ef4444';
+                                return (
+                                    <div key={wk} className="flex-1 flex flex-col items-center gap-1" title={`${wk}: ${entry.win || entry.blocker || 'No notes'}`}>
+                                        <div className="w-full rounded-sm transition-all" style={{ height: `${h}%`, background: color, opacity: isThisWeek ? 1 : 0.6 }} />
+                                        <span className="text-[8px] text-slate-600">{wk.split('-W')[1]}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {thisWeekEntry?.win && <p className="text-xs text-emerald-400 mt-2">🏆 This week: {thisWeekEntry.win}</p>}
+                        {thisWeekEntry?.blocker && <p className="text-xs text-amber-400 mt-1">⚠ Blocker: {thisWeekEntry.blocker}</p>}
+                    </div>
+                )}
+                {!showWeeklyCheckin && !thisWeekEntry && (
+                    <p className="text-xs text-slate-500">Takes 30 seconds. Tracks your confidence trend so you can catch when motivation is dipping.</p>
+                )}
+            </div>
 
             {/* ── HERO: Recovery Status ── */}
             <div className="glass-card glass-card-premium p-6 relative overflow-hidden">
@@ -5012,59 +6683,192 @@ ${financialContext}`;
                                 ))}
                             </div>
                         )}
+                        <button onClick={exportPDF} disabled={pdfExporting}
+                            className="mt-1 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl text-xs text-slate-400 hover:text-white transition-all disabled:opacity-50 self-start">
+                            <FileText size={12} />
+                            {pdfExporting ? 'Exporting…' : 'Export Recovery Plan PDF'}
+                        </button>
                     </div>
                 </div>
             </div>
 
-            {/* ── THE RECOVERY LADDER ── */}
-            <div className="glass-card p-6">
-                <div className="flex items-center gap-2 mb-5">
-                    <Target size={15} className="text-emerald-400" />
-                    <h3 className="text-base font-semibold text-white">The 7-Step Recovery Ladder</h3>
-                    <span className="text-xs text-slate-500 ml-1">— your path to financial freedom, in order</span>
-                </div>
-                <div className="relative">
-                    {/* Vertical connector line */}
-                    <div className="absolute left-5 top-6 bottom-6 w-0.5 bg-gradient-to-b from-emerald-500/40 via-slate-700/40 to-slate-700/10" />
-                    <div className="space-y-3">
+            {/* ── THE RECOVERY LADDER (interactive accordion) ── */}
+            {(() => {
+                const STEP_DETAIL = [
+                    {
+                        why: 'If you spend more than you earn every month, no strategy can save you. Closing the income-expense gap is the single most impactful thing you can do — it stops the bleeding and gives you something to work with.',
+                        actions: [
+                            'List every expense and mark each one as Fixed, Variable, or Cuttable',
+                            'Cancel or pause any subscription you haven\'t used in the last 30 days',
+                            'Find one source of extra income — even $200/mo changes the entire timeline',
+                        ],
+                    },
+                    {
+                        why: 'A $1,000 emergency buffer breaks the cycle of going deeper into debt every time something unexpected happens. Without it, one car repair undoes months of progress.',
+                        actions: [
+                            'Open a dedicated savings account (separate from your main chequing)',
+                            'Set up an automatic $50–$200 transfer on every payday',
+                            'Sell unused items around the house to jump-start the fund',
+                        ],
+                    },
+                    {
+                        why: 'Missing minimum payments triggers fees, penalty rates, and credit damage that cost far more than the payment itself. Paying minimums on everything protects your foundation while you focus your extra dollars strategically.',
+                        actions: [
+                            'Set up autopay for every minimum payment — eliminate human error',
+                            'List all debts with due dates to make sure nothing slips',
+                            'If you\'re behind, call your creditors — hardship programs are more common than you think',
+                        ],
+                    },
+                    {
+                        why: 'Three months of expenses in the bank transforms your relationship with money. You stop making fear-based decisions. You negotiate from strength, not desperation.',
+                        actions: [
+                            `Target saving ${fmt(ef3)} (3× your monthly expenses)`,
+                            'Keep this money in a High-Interest Savings Account (HISA) earning 4–5%',
+                            'Don\'t touch it for anything except a true emergency',
+                        ],
+                    },
+                    {
+                        why: 'High-interest debt (above 8%) destroys wealth faster than any investment can build it. Paying off a 20% credit card is a guaranteed 20% return — better than any market can reliably offer.',
+                        actions: [
+                            'Use the avalanche method: minimum payments everywhere, all extra to the highest-rate debt',
+                            'As each debt is paid off, roll that minimum payment into the next one (debt snowball effect)',
+                            'Consider a balance transfer to a 0% promotional card to buy time',
+                        ],
+                    },
+                    {
+                        why: 'Six months of expenses is the real safety net. It means you can weather a job loss, health issue, or major life event without financial catastrophe. This is financial peace of mind.',
+                        actions: [
+                            `Build from ${fmt(ef3)} to ${fmt(ef6)} — the halfway point is already behind you`,
+                            'Keep this in a TFSA or HISA, separate from your everyday account',
+                            'Automate the savings — set it and let it grow',
+                        ],
+                    },
+                    {
+                        why: 'Once your foundation is solid, every dollar invested works for you 24/7. Compound growth means time in the market is worth more than any market timing strategy.',
+                        actions: [
+                            'Max out your TFSA first — tax-free growth is the most powerful financial tool Canadians have',
+                            'Then contribute to your RRSP to reduce taxable income',
+                            'Start with a simple index fund (e.g. XEQT or VEQT) — no stock-picking required',
+                        ],
+                    },
+                ];
+
+                const completedSteps = priorityStack.steps.filter(s => s.done).length;
+
+                return (
+                <div className="glass-card p-6">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            <Target size={15} className="text-emerald-400" />
+                            <h3 className="text-base font-semibold text-white">The 7-Step Recovery Ladder</h3>
+                        </div>
+                        <span className="text-xs text-slate-500">{completedSteps}/7 complete</span>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden mb-5">
+                        <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-500"
+                            style={{ width: `${(completedSteps / 7) * 100}%` }} />
+                    </div>
+                    <div className="space-y-2">
                         {priorityStack.steps.map((step, i) => {
                             const isActive = i === currentStepIdx;
                             const isDone = step.done;
-                            const isFuture = !isDone && i > currentStepIdx;
+                            const isOpen = expandedStep === i;
+                            const detail = STEP_DETAIL[i];
                             return (
-                                <div key={step.id} className={`relative flex items-start gap-4 pl-1 pr-4 py-3.5 rounded-xl transition-all ${
-                                    isActive ? 'bg-emerald-500/10 border border-emerald-500/20' : isDone ? 'bg-white/[0.02]' : 'opacity-60'
+                                <div key={step.id} className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+                                    isActive && !isDone
+                                        ? 'border-emerald-500/40 shadow-[0_0_16px_rgba(16,240,160,0.12)]'
+                                        : isDone
+                                        ? 'border-emerald-500/15 bg-emerald-500/[0.03]'
+                                        : 'border-white/[0.06] bg-white/[0.01]'
                                 }`}>
-                                    {/* Step circle */}
-                                    <div className={`relative z-10 w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-base font-bold transition-all ${
-                                        isDone ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : isActive ? 'bg-emerald-500/20 border-2 border-emerald-500 text-emerald-400' : 'bg-slate-700/50 border border-slate-600 text-slate-500'
-                                    }`}>
-                                        {isDone ? '✓' : step.icon}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <h4 className={`text-sm font-semibold ${isDone ? 'text-emerald-400' : isActive ? 'text-white' : 'text-slate-500'}`}>{step.label}</h4>
-                                            {isActive && <span className="text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-medium">← You are here</span>}
-                                            {isDone && <span className="text-[10px] text-emerald-600 font-medium">Complete</span>}
+                                    {/* Accordion header */}
+                                    <button
+                                        onClick={() => setExpandedStep(isOpen ? null : i)}
+                                        className="w-full flex items-center gap-3 px-4 py-3.5 text-left group"
+                                    >
+                                        {/* Step circle */}
+                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold transition-all ${
+                                            isDone ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/25' : isActive ? 'bg-emerald-500/20 border-2 border-emerald-500 text-emerald-400' : 'bg-slate-700/50 border border-slate-600/50 text-slate-500'
+                                        }`}>
+                                            {isDone ? '✓' : step.icon}
                                         </div>
-                                        <p className={`text-xs mt-0.5 leading-relaxed ${isDone ? 'text-slate-500' : isActive ? 'text-slate-300' : 'text-slate-600'}`}>{step.desc}</p>
-                                        {step.target && step.current !== undefined && !isDone && (
-                                            <div className="mt-2">
-                                                <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-                                                    <span>{fmt(step.current)} saved</span>
-                                                    <span>target: {fmt(step.target)}</span>
-                                                </div>
-                                                <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-full transition-all"
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className={`text-sm font-semibold ${isDone ? 'text-emerald-400' : isActive ? 'text-white' : 'text-slate-400'}`}>{step.label}</span>
+                                                {isActive && !isDone && <span className="text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-medium">You are here</span>}
+                                                {isDone && <span className="text-[10px] text-emerald-500/70 font-medium">Done</span>}
+                                            </div>
+                                            {!isOpen && <p className="text-xs text-slate-600 mt-0.5 truncate">{step.desc}</p>}
+                                        </div>
+                                        {step.target && step.current !== undefined && !isDone && !isOpen && (
+                                            <div className="shrink-0 text-right mr-2 hidden sm:block">
+                                                <p className="text-[10px] text-slate-500">{Math.round((step.current / step.target) * 100)}%</p>
+                                                <div className="w-16 h-1 bg-slate-700 rounded-full mt-0.5">
+                                                    <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full"
                                                         style={{ width: `${Math.min(100, (step.current / step.target) * 100)}%` }} />
                                                 </div>
                                             </div>
                                         )}
-                                    </div>
-                                    {isFuture && i <= currentStepIdx + 2 && savingsData.canSave > 0 && (
-                                        <div className="shrink-0 text-right">
-                                            <p className="text-[10px] text-slate-600">approx.</p>
-                                            <p className="text-xs text-slate-500 font-mono">{getStepDate(i * 3) || '—'}</p>
+                                        <svg className={`shrink-0 w-4 h-4 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </button>
+
+                                    {/* Accordion body */}
+                                    {isOpen && (
+                                        <div className="px-4 pb-4 space-y-4 border-t border-white/[0.05]">
+                                            <div className="pt-4 space-y-4">
+                                                {/* Desc + progress */}
+                                                <p className="text-sm text-slate-300 leading-relaxed">{step.desc}</p>
+                                                {step.target && step.current !== undefined && !isDone && (
+                                                    <div>
+                                                        <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                                                            <span>{fmt(step.current)} saved</span>
+                                                            <span>target {fmt(step.target)}</span>
+                                                        </div>
+                                                        <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
+                                                            <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all"
+                                                                style={{ width: `${Math.min(100, (step.current / step.target) * 100)}%` }} />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {/* Why this matters */}
+                                                <div className="p-3 rounded-lg bg-slate-800/50 border border-white/[0.06]">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Why this matters</p>
+                                                    <p className="text-xs text-slate-300 leading-relaxed">{detail.why}</p>
+                                                </div>
+                                                {/* Actions */}
+                                                <div>
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Actions to take</p>
+                                                    <ul className="space-y-1.5">
+                                                        {detail.actions.map((action, ai) => (
+                                                            <li key={ai} className="flex items-start gap-2 text-xs text-slate-300">
+                                                                <span className="mt-0.5 w-4 h-4 shrink-0 rounded-full bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center text-emerald-400 font-bold text-[9px]">{ai + 1}</span>
+                                                                {action}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                                {/* Notes */}
+                                                <div>
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">My notes</p>
+                                                    <textarea
+                                                        value={recoveryNotes[step.id] || ''}
+                                                        onChange={e => setRecoveryNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
+                                                        placeholder="Add your own notes, obstacles, or progress for this step…"
+                                                        rows={3}
+                                                        className="w-full bg-slate-800/60 border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 resize-none focus:outline-none focus:border-emerald-500/40 transition-colors"
+                                                    />
+                                                </div>
+                                                {/* Mark done button */}
+                                                {!isDone && (
+                                                    <div className="flex justify-end">
+                                                        <span className="text-[10px] text-slate-600 italic">Completion is tracked automatically based on your data</span>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -5072,7 +6876,8 @@ ${financialContext}`;
                         })}
                     </div>
                 </div>
-            </div>
+                );
+            })()}
 
             {/* ── 30-DAY SPRINT ── */}
             <div className="glass-card p-6">
@@ -5099,6 +6904,65 @@ ${financialContext}`;
                 </div>
             </div>
 
+            {/* ── DEBT PAYOFF CONFIDENCE METER ── */}
+            {debts.length > 0 && totalDebtBalance > 0 && (() => {
+                // Baseline: current payments
+                const baseMonths = totalDebtPayments > 0 ? Math.ceil(totalDebtBalance / totalDebtPayments) : 999;
+                // Stress: income drops 20%
+                const stress20Net = summary.monthlyNet - summary.monthlyIncome * 0.20;
+                const stress20Payments = Math.max(0, totalDebtPayments + Math.min(0, stress20Net));
+                const stress20Months = stress20Payments > 0 ? Math.ceil(totalDebtBalance / stress20Payments) : 999;
+                // Stress: income drops 50%
+                const stress50Net = summary.monthlyNet - summary.monthlyIncome * 0.50;
+                const stress50Payments = Math.max(0, totalDebtPayments + Math.min(0, stress50Net));
+                const stress50Months = stress50Payments > 0 ? Math.ceil(totalDebtBalance / stress50Payments) : 999;
+                // Confidence: base on how many months of missed payment runway exists
+                const savingsBuffer = Object.entries(accountBalances).filter(([id]) => { const acc = accounts.find(a => a.id === id); return acc?.accountType !== 'credit'; }).reduce((s, [, v]) => s + Math.max(0, Number(v)), 0);
+                const missedPaymentRunway = totalDebtPayments > 0 ? Math.floor(savingsBuffer / totalDebtPayments) : 0;
+                const confidence = baseMonths < 999 ? (missedPaymentRunway >= 3 ? 'High' : missedPaymentRunway >= 1 ? 'Medium' : 'Lower') : 'Uncertain';
+                const confColor = confidence === 'High' ? '#0ecb81' : confidence === 'Medium' ? '#f59e0b' : '#ef4444';
+                const confPct = confidence === 'High' ? 85 : confidence === 'Medium' ? 55 : 30;
+                return (
+                    <div className="glass-card p-6">
+                        <div className="flex items-center gap-2 mb-4">
+                            <span className="text-base">🎯</span>
+                            <h3 className="text-base font-semibold text-white">Payoff Confidence Meter</h3>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-center gap-6">
+                            {/* Gauge */}
+                            <div className="relative w-28 h-28 shrink-0">
+                                <svg className="w-28 h-28 -rotate-90" viewBox="0 0 80 80">
+                                    <circle cx="40" cy="40" r="30" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="10" />
+                                    <circle cx="40" cy="40" r="30" fill="none" stroke={confColor} strokeWidth="10"
+                                        strokeDasharray={`${(confPct / 100) * 188} 188`} strokeLinecap="round" />
+                                </svg>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span className="text-lg font-bold text-white">{confPct}%</span>
+                                    <span className="text-[9px] font-medium" style={{ color: confColor }}>{confidence}</span>
+                                </div>
+                            </div>
+                            {/* Scenarios */}
+                            <div className="flex-1 space-y-3">
+                                <p className="text-xs text-slate-400">How your payoff timeline changes under income stress:</p>
+                                {[
+                                    { label: 'At current pace', months: baseMonths, color: 'text-emerald-400' },
+                                    { label: '−20% income shock', months: stress20Months, color: 'text-amber-400' },
+                                    { label: '−50% income shock', months: stress50Months, color: 'text-rose-400' },
+                                ].map(s => (
+                                    <div key={s.label} className="flex items-center justify-between">
+                                        <span className="text-xs text-slate-400">{s.label}</span>
+                                        <span className={`font-mono text-sm font-semibold ${s.color}`}>
+                                            {s.months >= 999 ? 'Cannot pay off' : `${s.months} months`}
+                                        </span>
+                                    </div>
+                                ))}
+                                <p className="text-[10px] text-slate-600 pt-1">Buffer: {missedPaymentRunway} month{missedPaymentRunway !== 1 ? 's' : ''} of saved payments · {fmt(savingsBuffer)} in checking/savings</p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
             {/* ── DEBT PAYOFF TIMELINE ── */}
             {debts.length > 0 && debtTimeline.length > 0 && (
                 <div className="glass-card p-6">
@@ -5115,7 +6979,14 @@ ${financialContext}`;
                             const rate = Number(d.interestRate);
                             const pay = Number(d.monthlyPayment) || Number(d.minimumPayment) || 0;
                             const extra = i === 0 ? canPayExtra : 0;
-                            const moPayoff = pay + extra > 0 ? Math.ceil(bal / (pay + extra)) : 999;
+                            const pmt = pay + extra;
+                            const monthlyRate = rate / 100 / 12;
+                            const moPayoff = (() => {
+                                if (pmt <= 0) return 999;
+                                if (monthlyRate <= 0) return Math.ceil(bal / pmt);
+                                if (pmt <= bal * monthlyRate) return 999; // payment doesn't cover interest
+                                return Math.ceil(-Math.log(1 - (monthlyRate * bal / pmt)) / Math.log(1 + monthlyRate));
+                            })();
                             const pd = getStepDate(moPayoff);
                             return (
                                 <div key={d.id} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl">
@@ -5274,12 +7145,14 @@ ${financialContext}`;
 
         // ─── Comprehensive Diagnosis Engine ───
         const savingsRate = summary.monthlyIncome > 0 ? (summary.monthlyNet / summary.monthlyIncome) * 100 : 0;
-        const dti = summary.monthlyIncome > 0 ? (totalDebtPayments / summary.monthlyIncome) * 100 : 0;
+        // DTI uses minimum payments (what lenders care about), not actual payments
+        const totalMinPayments = debts.reduce((s, d) => s + (Number(d.minimumPayment) || Number(d.monthlyPayment) || 0), 0);
+        const dti = summary.monthlyIncome > 0 ? (totalMinPayments / summary.monthlyIncome) * 100 : 0;
         const months = summary.monthsOfData || 1;
 
         // Category spending analysis
         const catMonthly = {};
-        transactions.filter(t => t.amount < 0 && t.category !== 'Transfers' && !transferTxIds.has(t.id))
+        dashboardTx.filter(t => t.amount < 0 && t.category !== 'Transfers' && !transferTxIds.has(t.id))
             .forEach(t => { catMonthly[t.category] = (catMonthly[t.category] || 0) + Math.abs(t.amount); });
         Object.keys(catMonthly).forEach(k => { catMonthly[k] /= months; });
 
@@ -5291,7 +7164,7 @@ ${financialContext}`;
 
         // Weekend vs weekday spending
         let weekendSpend = 0, weekdaySpend = 0;
-        transactions.filter(t => t.amount < 0 && t.category !== 'Transfers').forEach(t => {
+        dashboardTx.filter(t => t.amount < 0 && t.category !== 'Transfers' && !transferTxIds.has(t.id)).forEach(t => {
             const d = new Date(t.date).getDay();
             if (d === 0 || d === 6) weekendSpend += Math.abs(t.amount);
             else weekdaySpend += Math.abs(t.amount);
@@ -5302,13 +7175,13 @@ ${financialContext}`;
 
         // Dining-out vs grocery split
         const groceryWords = ['sobeys', 'food basics', 'walmart', 'costco', 'no frills', 'metro', 'loblaws', 'freshco', 'farm boy', 'superstore', 'grocery'];
-        const grocerySpend = transactions.filter(t => t.amount < 0 && t.category === 'Food & Dining' && groceryWords.some(w => t.description.toLowerCase().includes(w))).reduce((s, t) => s + Math.abs(t.amount), 0) / months;
+        const grocerySpend = dashboardTx.filter(t => t.amount < 0 && t.category === 'Food & Dining' && groceryWords.some(w => t.description.toLowerCase().includes(w))).reduce((s, t) => s + Math.abs(t.amount), 0) / months;
         const diningOutSpend = Math.max(0, foodMonthly - grocerySpend);
         const diningOutPct = foodMonthly > 0 ? (diningOutSpend / foodMonthly) * 100 : 0;
 
         // Income concentration risk
         const incomeBySource = {};
-        transactions.filter(t => t.amount > 0 && t.category !== 'Transfers').forEach(t => {
+        dashboardTx.filter(t => t.amount > 0 && !transferTxIds.has(t.id) && t.category !== 'Transfers').forEach(t => {
             const key = t.description.substring(0, 16).trim();
             incomeBySource[key] = (incomeBySource[key] || 0) + t.amount;
         });
@@ -5429,6 +7302,10 @@ ${financialContext}`;
             });
         }
 
+        // Always show critical issues first, then warnings, then info, then healthy
+        const _SORDER = { critical: 0, warning: 1, info: 2, healthy: 3 };
+        diagnoses.sort((a, b) => (_SORDER[a.severity] ?? 9) - (_SORDER[b.severity] ?? 9));
+
         const severityStyle = {
             critical: { border: 'border-rose-500/30', bg: 'bg-rose-500/[0.07]', badge: 'bg-rose-500/20 text-rose-400 border-rose-500/30' },
             warning:  { border: 'border-amber-500/30', bg: 'bg-amber-500/[0.07]', badge: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
@@ -5486,7 +7363,7 @@ ${financialContext}`;
                     </div>
                     <div className="glass-card p-4 text-center">
                         <div className={`text-2xl font-bold font-mono ${dti < 28 ? 'text-emerald-400' : dti < 40 ? 'text-amber-400' : 'text-rose-400'}`}>{dti.toFixed(1)}%</div>
-                        <div className="text-xs text-slate-400 mt-0.5"><Tip term="Debt-to-Income">Monthly debt payments ÷ monthly income. Under 28% is healthy. Above 43% makes it hard to qualify for loans or mortgage.</Tip></div>
+                        <div className="text-xs text-slate-400 mt-0.5"><Tip term="Debt-to-Income">Minimum monthly debt payments ÷ monthly income. Under 28% is healthy. Above 43% makes it hard to qualify for loans.</Tip></div>
                         <div className={`text-[10px] mt-0.5 ${dti < 28 ? 'text-emerald-600' : 'text-slate-600'}`}>target &lt;28%</div>
                     </div>
                     <div className="glass-card p-4 text-center">
@@ -5596,16 +7473,29 @@ ${financialContext}`;
                 {/* Subscription Intelligence Panel */}
                 {subscriptionAudit.length > 0 && (
                     <div className="glass-card p-5">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                <Tv size={14} className="text-violet-400" /> Subscription Intelligence
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/20 font-medium">AI Tips</span>
-                            </h3>
-                            <div className="text-right">
-                                <p className="text-xs font-mono text-rose-400">{fmt(subscriptionAudit.reduce((s, r) => s + r.avgAmount, 0))}/mo</p>
-                                <p className="text-[10px] text-slate-500">{fmt(subscriptionAudit.reduce((s, r) => s + r.avgAmount * 12, 0))}/yr</p>
-                            </div>
-                        </div>
+                        {(() => {
+                            const subTotal = subscriptionAudit.reduce((s, r) => s + r.avgAmount, 0);
+                            const subAnnual = subTotal * 12;
+                            return (
+                                <>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                        <Tv size={14} className="text-violet-400" /> Subscription Intelligence
+                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/20 font-medium">AI Tips</span>
+                                    </h3>
+                                    <div className="text-right">
+                                        <p className="text-xs font-mono text-rose-400">{fmt(subTotal)}/mo</p>
+                                    </div>
+                                </div>
+                                <div className="p-3 mb-4 rounded-xl bg-rose-500/8 border border-rose-500/20 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-slate-400">You're spending <span className="text-rose-300 font-semibold">{fmt(subAnnual)}/year</span> on subscriptions</p>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">That's {fmt(subTotal)}/mo across {subscriptionAudit.length} service{subscriptionAudit.length !== 1 ? 's' : ''} — how many do you actually use?</p>
+                                    </div>
+                                </div>
+                                </>
+                            );
+                        })()}
                         <div className="space-y-3">
                             {subscriptionAudit.map((sub, i) => (
                                 <div key={i} className="rounded-xl p-3 bg-white/[0.025] border border-white/[0.05] hover:border-violet-500/20 transition-all">
@@ -5651,6 +7541,239 @@ ${financialContext}`;
                         {weekendPct > 45 && <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">Weekend spending is elevated. Social outings, impulse purchases, and entertainment tend to cluster here. Consider setting a weekend cash limit.</p>}
                     </div>
                 )}
+
+                {/* ── MERCHANT-LEVEL BREAKDOWN ── */}
+                {transactions.length > 0 && (() => {
+                    const merchantMap = {};
+                    transactions.filter(t => t.amount < 0 && t.category !== 'Transfers' && !transferTxIds.has(t.id)).forEach(t => {
+                        const key = t.description.substring(0, 22).trim();
+                        if (!merchantMap[key]) merchantMap[key] = { name: key, total: 0, count: 0, category: t.category, months: new Set() };
+                        merchantMap[key].total += Math.abs(t.amount);
+                        merchantMap[key].count += 1;
+                        merchantMap[key].months.add(t.date.slice(0, 7));
+                    });
+                    const topMerchants = Object.values(merchantMap)
+                        .map(m => ({ ...m, monthly: m.total / Math.max(1, m.months.size), avg: m.total / m.count }))
+                        .sort((a, b) => b.total - a.total)
+                        .slice(0, 20);
+                    if (topMerchants.length === 0) return null;
+                    const maxTotal = topMerchants[0].total;
+                    return (
+                        <div className="glass-card p-5">
+                            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                                <BarChart3 size={14} className="text-sky-400" /> Top Merchants by Spend
+                            </h3>
+                            <div className="space-y-2">
+                                {topMerchants.map((m, i) => {
+                                    const catColor = CATEGORIES.find(c => c.name === m.category)?.color || '#94a3b8';
+                                    return (
+                                        <div key={i} className="flex items-center gap-3">
+                                            <span className="text-[11px] text-slate-600 w-4 text-right shrink-0">{i+1}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between mb-0.5">
+                                                    <span className="text-xs text-slate-200 truncate">{m.name}</span>
+                                                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                                                        <span className="text-[10px] text-slate-500">{m.count}× · {fmt(m.avg)} avg</span>
+                                                        <span className="font-mono text-xs text-white font-medium">{fmt(m.total)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="h-1 bg-slate-700/40 rounded-full overflow-hidden">
+                                                    <div className="h-full rounded-full" style={{ width: `${(m.total / maxTotal) * 100}%`, background: catColor }} />
+                                                </div>
+                                            </div>
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0" style={{ color: catColor, background: catColor + '22' }}>{m.category}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-slate-600 mt-3">Top 20 merchants by total spend across all imported transactions.</p>
+                        </div>
+                    );
+                })()}
+            </div>
+        );
+    };
+
+    /* ═══════════════════════════════════════
+       RENDER — MY RECOVERY TAB (merged)
+       ═══════════════════════════════════════ */
+    const renderMyRecovery = () => {
+        const subTabs = [
+            { id: 'overview',     label: 'Overview',        icon: Target },
+            { id: 'diagnostics',  label: 'Diagnostics',     icon: Stethoscope },
+            { id: 'goals',        label: 'Goals & Savings', icon: PiggyBank },
+        ];
+        return (
+            <div className="space-y-5 animate-fade-in">
+                {/* Sub-tab bar */}
+                <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(56,191,255,0.04)', border: '1px solid rgba(56,191,255,0.1)', width: 'fit-content' }}>
+                    {subTabs.map(st => (
+                        <button key={st.id} onClick={() => setRecoverySubTab(st.id)}
+                            className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-lg font-semibold transition-all"
+                            style={recoverySubTab === st.id
+                                ? { background: 'rgba(56,191,255,0.15)', color: '#38BFFF', boxShadow: '0 0 12px rgba(56,191,255,0.2)' }
+                                : { color: 'var(--text-faint)' }}>
+                            <st.icon size={13} strokeWidth={recoverySubTab === st.id ? 2.2 : 1.7} />
+                            {st.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Overview — Recovery Plan */}
+                {recoverySubTab === 'overview' && renderRecovery()}
+
+                {/* Diagnostics — Spend Check + Budget vs Actual + Cash Flow Stress Test */}
+                {recoverySubTab === 'diagnostics' && (
+                    <div className="space-y-5">
+
+                        {/* Flagged Transactions Summary */}
+                        {suspiciousFlags.size > 0 && (() => {
+                            const flagged = transactions
+                                .filter(t => suspiciousFlags.has(t.id))
+                                .sort((a, b) => {
+                                    const aWarn = suspiciousFlags.get(a.id).severity === 'warn' ? 0 : 1;
+                                    const bWarn = suspiciousFlags.get(b.id).severity === 'warn' ? 0 : 1;
+                                    return aWarn - bWarn || b.date.localeCompare(a.date);
+                                })
+                                .slice(0, 15);
+                            const warnCount = flagged.filter(t => suspiciousFlags.get(t.id).severity === 'warn').length;
+                            return (
+                                <div className="glass-card p-5">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <AlertTriangle size={14} className="text-rose-400 shrink-0" />
+                                        <h3 className="text-sm font-semibold text-white">Flagged Transactions</h3>
+                                        <span className="ml-auto text-[10px] font-medium text-rose-400">{warnCount} warning{warnCount !== 1 ? 's' : ''} · {suspiciousFlags.size - warnCount} info</span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {flagged.map(t => {
+                                            const f = suspiciousFlags.get(t.id);
+                                            return (
+                                                <div key={t.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-xs ${f.severity === 'warn' ? 'border-rose-500/25 bg-rose-500/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
+                                                    <span className={f.severity === 'warn' ? 'text-rose-400' : 'text-amber-400'}>
+                                                        {f.severity === 'warn' ? '⚠' : 'ℹ'}
+                                                    </span>
+                                                    <span className="text-slate-500 font-mono w-20 shrink-0">{t.date}</span>
+                                                    <span className="text-slate-200 flex-1 truncate">{t.description}</span>
+                                                    <span className={`font-mono shrink-0 ${t.amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{fmt(t.amount)}</span>
+                                                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border ${f.severity === 'warn' ? 'text-rose-400 border-rose-500/30' : 'text-amber-400 border-amber-500/30'}`}>{f.reason}</span>
+                                                </div>
+                                            );
+                                        })}
+                                        {suspiciousFlags.size > 15 && <p className="text-[10px] text-slate-500 pl-3">+ {suspiciousFlags.size - 15} more — see full list in My Finances</p>}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        {renderDoctor()}
+
+                        {/* Budget vs Actual */}
+                        {categoryData.length > 0 && (() => {
+                            const budgetData = (budgetProgress.length > 0 ? budgetProgress.map(b => ({ cat: b.cat, spent: b.spent, budget: b.budget, pct: b.pct }))
+                                : autoBudgets.map(b => ({ cat: b.category, spent: b.actual, budget: b.budget, pct: b.pct }))).slice(0, 6);
+                            const overCount = budgetData.filter(b => b.pct > 100).length;
+                            const warnCount = budgetData.filter(b => b.pct > 80 && b.pct <= 100).length;
+                            return (
+                                <div className="glass-card p-5">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-base font-semibold text-white">Budget vs. Actual</h3>
+                                            <p className="text-[11px] text-slate-500 mt-0.5">
+                                                {overCount > 0 ? <span className="text-rose-400">{overCount} over budget · </span> : null}
+                                                {warnCount > 0 ? <span className="text-amber-400">{warnCount} approaching · </span> : null}
+                                                {overCount === 0 && warnCount === 0 ? <span className="text-emerald-400">All categories on track · </span> : null}
+                                                monthly avg
+                                            </p>
+                                        </div>
+                                        <button onClick={() => setActiveTab('finances')} className="text-[11px] text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-all">Edit Budgets →</button>
+                                    </div>
+                                    {budgetData.length > 0 ? (
+                                        <div className="space-y-2.5">
+                                            {budgetData.map((b, i) => {
+                                                const over = b.pct > 100, warn = b.pct > 80;
+                                                const catColor = CATEGORIES.find(c => c.name === b.cat)?.color || '#94a3b8';
+                                                return (
+                                                    <div key={i}>
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: catColor }} />
+                                                                <span className="text-xs text-slate-300">{b.cat}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 text-[11px]">
+                                                                <span className={`font-mono ${over ? 'text-rose-400' : warn ? 'text-amber-400' : 'text-slate-400'}`}>{fmt(b.spent)}</span>
+                                                                <span className="text-slate-600">/</span>
+                                                                <span className="font-mono text-slate-500">{fmt(b.budget)}</span>
+                                                                <span className={`w-8 text-right ${over ? 'text-rose-400' : warn ? 'text-amber-400' : 'text-emerald-500'}`}>{b.pct}%</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="h-1.5 bg-slate-700/40 rounded-full overflow-hidden">
+                                                            <div className={`h-full rounded-full transition-all ${over ? 'bg-rose-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                                style={{ width: `${Math.min(100, b.pct)}%` }} />
+                                                        </div>
+                                                        {over && <p className="text-[10px] text-rose-400 mt-0.5">{fmt(b.spent - b.budget)} over budget</p>}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-4">
+                                            <p className="text-xs text-slate-500 mb-3">No budgets set yet. Set monthly targets to track where you're over-spending.</p>
+                                            <button onClick={() => setActiveTab('finances')} className="text-xs px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-emerald-400 rounded-lg transition-all">Set Budgets in My Finances →</button>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
+
+                        {/* Cash Flow Stress Test */}
+                        {summary.monthlyIncome > 0 && (
+                            <div className="glass-card p-5">
+                                <div className="flex items-center gap-2 mb-4">
+                                    <span className="text-base">🧪</span>
+                                    <h3 className="text-base font-semibold text-white">Cash Flow Stress Test</h3>
+                                    <span className="text-[10px] text-slate-500 ml-auto">What if your income dropped?</span>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    {[
+                                        { label: '−20% Income', cut: 0.20, icon: '📉' },
+                                        { label: '−50% Income', cut: 0.50, icon: '⚠️' },
+                                        { label: 'Job Loss',    cut: 1.00, icon: '🚨' },
+                                    ].map(({ label, cut, icon }) => {
+                                        const reducedIncome = summary.monthlyIncome * (1 - cut);
+                                        const newNet = reducedIncome - summary.monthlySpending;
+                                        const savingsBuffer = nwAssets.filter(a => a.type === 'cash').reduce((s, a) => s + Number(a.value), 0)
+                                            + Object.entries(accountBalances).filter(([id]) => { const acc = accounts.find(a => a.id === id); return acc?.accountType !== 'credit'; }).reduce((s, [, v]) => s + Math.max(0, Number(v)), 0);
+                                        const runwayMo = newNet < 0 && savingsBuffer > 0 ? Math.floor(savingsBuffer / Math.abs(newNet)) : null;
+                                        const color = newNet >= 0 ? 'emerald' : runwayMo !== null && runwayMo >= 3 ? 'amber' : 'rose';
+                                        const borderCls = color === 'emerald' ? 'border-emerald-500/20 bg-emerald-500/5' : color === 'amber' ? 'border-amber-500/20 bg-amber-500/5' : 'border-rose-500/20 bg-rose-500/5';
+                                        const textCls = color === 'emerald' ? 'text-emerald-400' : color === 'amber' ? 'text-amber-400' : 'text-rose-400';
+                                        return (
+                                            <div key={label} className={`rounded-xl border p-4 ${borderCls}`}>
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className="text-sm">{icon}</span>
+                                                    <p className="text-xs font-semibold text-slate-300">{label}</p>
+                                                </div>
+                                                <p className="text-[10px] text-slate-500 mb-2">Income: {fmt(reducedIncome)}/mo</p>
+                                                <p className={`font-mono text-base font-bold ${textCls}`}>{newNet >= 0 ? '+' : ''}{fmt(newNet)}/mo</p>
+                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                    {newNet >= 0
+                                                        ? 'Still cash-flow positive ✓'
+                                                        : runwayMo !== null
+                                                        ? `Savings last ~${runwayMo} month${runwayMo !== 1 ? 's' : ''}`
+                                                        : 'Immediate shortfall — no buffer'}
+                                                </p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-[10px] text-slate-600 mt-3">Based on current spending pattern of {fmt(summary.monthlySpending)}/mo. Buffer uses savings account balances.</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Goals & Savings */}
+                {recoverySubTab === 'goals' && renderSavings()}
             </div>
         );
     };
@@ -5659,6 +7782,7 @@ ${financialContext}`;
        RENDER — NET WORTH TAB
        ═══════════════════════════════════════ */
     const NW_TYPES = { cash: { label: 'Cash / Savings', color: '#0ecb81' }, investment: { label: 'Investments', color: '#3b82f6' }, property: { label: 'Real Estate', color: '#f59e0b' }, vehicle: { label: 'Vehicle', color: '#8b5cf6' }, other: { label: 'Other Asset', color: '#64748b' } };
+    const NW_GROUP_ORDER = ['bank','savings_acc','credit_card','mortgage','student_loan','vehicle_loan','loc','other_debt','cash','investment','property','vehicle_asset','other_asset'];
 
     const renderNetWorth = () => {
         const isPositive = netWorth.total >= 0;
@@ -5667,9 +7791,21 @@ ${financialContext}`;
             ...Object.entries(accountBalances).filter(([, v]) => Number(v) !== 0).map(([id, v]) => {
                 const acc = accounts.find(a => a.id === id);
                 const isCred = acc?.accountType === 'credit';
-                return { name: acc?.accountName || 'Account', value: Number(v), typeLabel: isCred ? 'Credit Card' : 'Bank Account', color: isCred ? '#ef4444' : '#0ecb81', isLiability: isCred && Number(v) > 0 };
+                const isDebt = ['credit', 'loc', 'mortgage', 'vehicle'].includes(acc?.accountType);
+                const accTypeInfo = ACCOUNT_TYPES[acc?.accountType];
+                const typeLabel = accTypeInfo?.label || (isCred ? 'Credit Card' : 'Bank Account');
+                const color = accTypeInfo?.color || (isCred ? '#ef4444' : '#0ecb81');
+                return { name: acc?.accountName || 'Account', value: Number(v), typeLabel, color, isLiability: isDebt && Number(v) > 0, accountType: acc?.accountType };
             }),
-            ...debts.map(d => ({ name: d.name, value: -(Number(d.amount) || 0), typeLabel: 'Debt', color: '#ef4444', isLiability: true })),
+            ...debts.map(d => {
+                const isMortgage = /mortgage/i.test(d.debtCategory || '') || /mortgage/i.test(d.name);
+                const isVehicle = /vehicle|car|auto|truck/i.test(d.debtCategory || '') || /vehicle|car|auto|truck/i.test(d.name);
+                const isStudent = /student|education/i.test(d.debtCategory || '');
+                const isLoc = /line of credit|heloc|loc/i.test(d.debtCategory || '') || /loc$/i.test(d.name);
+                const typeLabel = isMortgage ? 'Mortgage' : isVehicle ? 'Vehicle Loan' : isStudent ? 'Student Loan' : isLoc ? 'Line of Credit' : 'Debt';
+                const color = isMortgage ? '#14b8a6' : isVehicle ? '#0ea5e9' : isStudent ? '#6366f1' : '#ef4444';
+                return { name: d.name, value: -(Number(d.amount) || 0), typeLabel, color, isLiability: true };
+            }),
         ];
         const pieData = Object.entries(NW_TYPES).map(([k, v]) => {
             const total = nwAssets.filter(a => a.type === k).reduce((s, a) => s + (Number(a.value) || 0), 0);
@@ -5696,23 +7832,153 @@ ${financialContext}`;
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Asset breakdown */}
+                {/* Net Worth Trend */}
+                {nwTrend.length > 1 && (
                     <div className="glass-card p-6">
-                        <h3 className="text-base font-semibold text-white mb-4">Assets & Liabilities</h3>
-                        <div className="space-y-2 mb-4">
-                            {allAssets.length === 0 ? (
-                                <p className="text-sm text-slate-500 text-center py-4">No assets added yet. Add accounts on the Transactions tab, debts on the Debts tab, and manual assets below.</p>
-                            ) : allAssets.map((a, i) => (
-                                <div key={i} className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0">
-                                    <div>
-                                        <p className="text-sm text-slate-200">{a.name}</p>
-                                        <p className="text-[10px]" style={{ color: a.color }}>{a.typeLabel}</p>
-                                    </div>
-                                    <span className={`font-mono text-sm font-medium ${a.isLiability || a.value < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{fmt(a.value)}</span>
-                                </div>
-                            ))}
+                        <div className="flex items-center gap-2 mb-1">
+                            <TrendingUp size={15} className={nwTrend[nwTrend.length-1].nw > nwTrend[0].nw ? 'text-emerald-400' : 'text-rose-400'} />
+                            <h3 className="text-base font-semibold text-white">Net Worth Over Time</h3>
                         </div>
+                        <p className="text-xs text-slate-500 mb-4">Approximate monthly net worth based on your transaction history.</p>
+                        <ResponsiveContainer width="100%" height={180}>
+                            <AreaChart data={nwTrend} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                                <defs>
+                                    <linearGradient id="nwTrendGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={nwTrend[nwTrend.length-1].nw >= 0 ? '#10f0a0' : '#ff5c7a'} stopOpacity={0.25} />
+                                        <stop offset="95%" stopColor={nwTrend[nwTrend.length-1].nw >= 0 ? '#10f0a0' : '#ff5c7a'} stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                                <XAxis dataKey="label" stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(nwTrend.length / 8) - 1)} />
+                                <YAxis stroke="#475569" tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={v => fmtShort(v)} width={56} />
+                                <Tooltip content={customTooltip} />
+                                <Area type="monotone" dataKey="nw" stroke={nwTrend[nwTrend.length-1].nw >= 0 ? '#10f0a0' : '#ff5c7a'} fill="url(#nwTrendGrad)" name="Net Worth" isAnimationActive={false} />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                        <div className="flex justify-between mt-3 text-xs">
+                            <span className="text-slate-500">{nwTrend[0]?.label}: <span className="font-mono text-slate-300">{fmt(nwTrend[0]?.nw)}</span></span>
+                            {(() => {
+                                const delta = nwTrend[nwTrend.length-1].nw - nwTrend[0].nw;
+                                return <span className={delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                    {delta >= 0 ? '▲' : '▼'} {fmt(Math.abs(delta))} over {nwTrend.length} months
+                                </span>;
+                            })()}
+                        </div>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Asset breakdown — grouped accordion */}
+                    <div className="glass-card p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-base font-semibold text-white">Assets & Liabilities</h3>
+                            <div className="flex gap-1.5">
+                                <button onClick={() => setExpandedNwGroups(new Set(NW_GROUP_ORDER))} className="text-[10px] text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-all">Expand All</button>
+                                <button onClick={() => setExpandedNwGroups(new Set())} className="text-[10px] text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition-all">Collapse</button>
+                            </div>
+                        </div>
+                        {allAssets.length === 0 ? (
+                            <p className="text-sm text-slate-500 text-center py-6">No assets yet. Import bank files in My Finances, add debts in My Finances → Debts, or add manual assets below.</p>
+                        ) : (() => {
+                            // Build groups
+                            const GROUP_ORDER = [
+                                { key: 'bank', label: 'Bank Accounts', color: '#0ecb81', isLiability: false },
+                                { key: 'savings_acc', label: 'Savings Accounts', color: '#06b6d4', isLiability: false },
+                                { key: 'credit_card', label: 'Credit Cards', color: '#ef4444', isLiability: true },
+                                { key: 'mortgage', label: 'Mortgage', color: '#14b8a6', isLiability: true },
+                                { key: 'student_loan', label: 'Student Loans', color: '#f59e0b', isLiability: true },
+                                { key: 'vehicle_loan', label: 'Vehicle Loans', color: '#8b5cf6', isLiability: true },
+                                { key: 'loc', label: 'Line of Credit', color: '#f97316', isLiability: true },
+                                { key: 'other_debt', label: 'Other Debts', color: '#e11d48', isLiability: true },
+                                { key: 'cash', label: 'Cash / Savings', color: '#0ecb81', isLiability: false },
+                                { key: 'investment', label: 'Investments', color: '#3b82f6', isLiability: false },
+                                { key: 'property', label: 'Real Estate', color: '#f59e0b', isLiability: false },
+                                { key: 'vehicle_asset', label: 'Vehicles', color: '#8b5cf6', isLiability: false },
+                                { key: 'other_asset', label: 'Other Assets', color: '#64748b', isLiability: false },
+                            ];
+
+                            // Assign each asset to a group key
+                            const grouped = {};
+                            allAssets.forEach(a => {
+                                let gk = 'other_asset';
+                                if (a.typeLabel === 'Bank Account') gk = a.color === '#0ecb81' ? 'bank' : 'savings_acc';
+                                else if (a.typeLabel === 'Credit Card') gk = 'credit_card';
+                                else if (a.typeLabel === 'Debt') {
+                                    // Determine by the matching debt entry
+                                    const d = debts.find(d => d.name === a.name);
+                                    const cat = d?.debtCategory || '';
+                                    if (/mortgage/.test(cat)) gk = 'mortgage';
+                                    else if (/student/.test(cat)) gk = 'student_loan';
+                                    else if (/car|vehicle/.test(cat)) gk = 'vehicle_loan';
+                                    else if (/loc|line/.test(cat)) gk = 'loc';
+                                    else gk = 'other_debt';
+                                } else if (a.typeLabel === 'Cash / Savings') gk = 'cash';
+                                else if (a.typeLabel === 'Investments') gk = 'investment';
+                                else if (a.typeLabel === 'Real Estate') gk = 'property';
+                                else if (a.typeLabel === 'Vehicle') gk = 'vehicle_asset';
+                                if (!grouped[gk]) grouped[gk] = [];
+                                grouped[gk].push(a);
+                            });
+
+                            return (
+                                <div className="space-y-1 mb-4">
+                                    {GROUP_ORDER.filter(g => grouped[g.key]?.length > 0).map(g => {
+                                        const items = grouped[g.key];
+                                        const total = items.reduce((s, a) => s + a.value, 0);
+                                        const expanded = expandedNwGroups.has(g.key);
+                                        const toggle = () => setExpandedNwGroups(prev => {
+                                            const next = new Set(prev);
+                                            next.has(g.key) ? next.delete(g.key) : next.add(g.key);
+                                            return next;
+                                        });
+                                        return (
+                                            <div key={g.key} className="rounded-lg overflow-hidden border border-white/5">
+                                                {/* Group header — clickable */}
+                                                <button onClick={toggle} className="w-full flex items-center justify-between px-4 py-3 bg-white/[0.04] hover:bg-white/[0.07] transition-colors text-left">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: g.color }} />
+                                                        <div>
+                                                            <p className="text-sm font-medium text-slate-200">{g.label}</p>
+                                                            <p className="text-[10px] text-slate-500">{items.length} item{items.length !== 1 ? 's' : ''}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className={`font-mono text-sm font-semibold ${g.isLiability || total < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{fmt(Math.abs(total))}</span>
+                                                        <ChevronRight size={14} className={`text-slate-500 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                                                    </div>
+                                                </button>
+                                                {/* Expanded items */}
+                                                {expanded && (
+                                                    <div className="bg-white/[0.02] divide-y divide-white/[0.04]">
+                                                        {items.map((a, i) => {
+                                                            // Find extra details from accounts or debts
+                                                            const accEntry = accounts.find(ac => ac.accountName === a.name);
+                                                            const debtEntry = debts.find(d => d.name === a.name);
+                                                            return (
+                                                                <div key={i} className="flex items-start justify-between px-6 py-3">
+                                                                    <div className="min-w-0">
+                                                                        <p className="text-sm text-slate-200 truncate">{a.name}</p>
+                                                                        {accEntry && <p className="text-[10px] text-slate-500 mt-0.5">{ACCOUNT_TYPES[accEntry.accountType]?.label || accEntry.accountType}</p>}
+                                                                        {debtEntry && (
+                                                                            <div className="flex gap-3 mt-0.5">
+                                                                                {debtEntry.interestRate && <span className="text-[10px] text-amber-400">{debtEntry.interestRate}% interest</span>}
+                                                                                {debtEntry.monthlyPayment && <span className="text-[10px] text-slate-500">{fmt(debtEntry.monthlyPayment)}/mo</span>}
+                                                                                {debtEntry.lender && <span className="text-[10px] text-slate-500">{debtEntry.lender}</span>}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className={`font-mono text-sm font-medium shrink-0 ml-4 ${g.isLiability || a.value < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{fmt(Math.abs(a.value))}</span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
                         {pieData.length > 0 && (
                             <ResponsiveContainer width="100%" height={160}>
                                 <PieChart>
@@ -5725,6 +7991,62 @@ ${financialContext}`;
                             </ResponsiveContainer>
                         )}
                     </div>
+
+                    {/* ── Net Worth Composition Risk ── */}
+                    {allAssets.filter(a => !a.isLiability).length > 0 && (() => {
+                        const assetValues = {};
+                        allAssets.filter(a => !a.isLiability && a.value > 0).forEach(a => {
+                            assetValues[a.typeLabel] = (assetValues[a.typeLabel] || 0) + a.value;
+                        });
+                        const totalAssets = Object.values(assetValues).reduce((s, v) => s + v, 0);
+                        if (totalAssets <= 0) return null;
+                        const sorted = Object.entries(assetValues).sort((a, b) => b[1] - a[1]);
+                        const topPct = (sorted[0][1] / totalAssets) * 100;
+                        const liabRatio = Math.abs(allAssets.filter(a => a.isLiability).reduce((s,a) => s + a.value, 0)) / Math.max(1, totalAssets) * 100;
+                        const risks = [];
+                        if (topPct > 80) risks.push({ label: `${topPct.toFixed(0)}% of assets in ${sorted[0][0]}`, detail: 'High concentration. Consider diversifying into other asset classes.', color: 'rose' });
+                        else if (topPct > 60) risks.push({ label: `${topPct.toFixed(0)}% of assets in ${sorted[0][0]}`, detail: 'Moderate concentration. Adding another asset type reduces risk.', color: 'amber' });
+                        if (liabRatio > 200) risks.push({ label: `Liabilities are ${liabRatio.toFixed(0)}% of assets`, detail: 'Debt significantly exceeds assets. Prioritize debt reduction.', color: 'rose' });
+                        else if (liabRatio > 100) risks.push({ label: `Liabilities are ${liabRatio.toFixed(0)}% of assets`, detail: 'Negative net worth. Every debt payment improves this ratio.', color: 'amber' });
+                        const diversityScore = Math.min(100, Math.round((1 - topPct / 100) * 100 + (Object.keys(assetValues).length - 1) * 10));
+                        return (
+                            <div className="glass-card p-5">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                                        <span>📊</span> Portfolio Risk
+                                    </h3>
+                                    <div className="text-right">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Diversification</p>
+                                        <p className={`font-mono text-sm font-bold ${diversityScore >= 60 ? 'text-emerald-400' : diversityScore >= 30 ? 'text-amber-400' : 'text-rose-400'}`}>{diversityScore}/100</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-2 mb-4">
+                                    {sorted.map(([type, val]) => {
+                                        const pct = (val / totalAssets) * 100;
+                                        const typeColor = Object.values(NW_TYPES).find(t => t.label === type)?.color || '#94a3b8';
+                                        return (
+                                            <div key={type} className="flex items-center gap-3">
+                                                <span className="text-xs text-slate-400 w-28 truncate shrink-0">{type}</span>
+                                                <div className="flex-1 h-2 bg-slate-700/40 rounded-full overflow-hidden">
+                                                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: typeColor }} />
+                                                </div>
+                                                <span className="text-[11px] font-mono text-slate-300 w-12 text-right shrink-0">{pct.toFixed(0)}%</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                {risks.length > 0 ? risks.map((r, i) => (
+                                    <div key={i} className={`flex items-start gap-2 px-3 py-2 rounded-lg mb-1.5 ${r.color === 'rose' ? 'bg-rose-500/8 border border-rose-500/15' : 'bg-amber-500/8 border border-amber-500/15'}`}>
+                                        <AlertTriangle size={12} className={`shrink-0 mt-0.5 ${r.color === 'rose' ? 'text-rose-400' : 'text-amber-400'}`} />
+                                        <div>
+                                            <p className={`text-xs font-medium ${r.color === 'rose' ? 'text-rose-300' : 'text-amber-300'}`}>{r.label}</p>
+                                            <p className="text-[10px] text-slate-500">{r.detail}</p>
+                                        </div>
+                                    </div>
+                                )) : <p className="text-xs text-emerald-400">✓ Asset diversification looks reasonable.</p>}
+                            </div>
+                        );
+                    })()}
 
                     {/* Add manual asset */}
                     <div className="glass-card p-6">
@@ -5780,6 +8102,378 @@ ${financialContext}`;
     };
 
     /* ═══════════════════════════════════════
+       RENDER TAX & INCOME
+       ═══════════════════════════════════════ */
+    const renderTax = () => {
+        // Compute gross annual from income profile
+        let grossAnnual = 0;
+        if (incomeProfile.type === 'salary') {
+            grossAnnual = parseFloat(incomeProfile.grossAmount) || 0;
+        } else if (incomeProfile.type === 'hourly') {
+            const rate = parseFloat(incomeProfile.grossAmount) || 0;
+            const hrs = Math.min(Math.max(parseFloat(incomeHoursPerWeek) || 40, 1), 80);
+            grossAnnual = rate * hrs * 52;
+        } else if (incomeProfile.type === 'freelance') {
+            const base = parseFloat(incomeProfile.grossAmount) || 0;
+            const freq = incomeProfile.payFrequency;
+            const mult = freq === 'weekly' ? 52 : freq === 'biweekly' ? 26 : freq === 'semimonthly' ? 24 : 12;
+            grossAnnual = base * mult;
+        }
+
+        const taxCalc = grossAnnual > 0 ? calculateCanadianTax(grossAnnual, incomeProfile.province) : null;
+        const totalDeductionsMonthly = (parseFloat(incomeProfile.rrspMonthly) || 0) + (parseFloat(incomeProfile.pensionMonthly) || 0) + (parseFloat(incomeProfile.benefitsMonthly) || 0) + (parseFloat(incomeProfile.otherMonthly) || 0);
+        const totalDeductionsAnnual = totalDeductionsMonthly * 12;
+        const netTakeHomeAnnual = taxCalc ? taxCalc.netAnnual - totalDeductionsAnnual : 0;
+        const netTakeHomeMonthly = netTakeHomeAnnual / 12;
+
+        const freqDivisor = incomeProfile.payFrequency === 'weekly' ? 52 : incomeProfile.payFrequency === 'biweekly' ? 26 : incomeProfile.payFrequency === 'semimonthly' ? 24 : 12;
+        const netTakeHomePerPaycheque = netTakeHomeAnnual / freqDivisor;
+
+        // Detected income from transactions
+        const detectedMonthlyIncome = summary.monthlyIncome;
+
+        // Donations, Healthcare, Education from transactions
+        const donationTotal = transactions.filter(t => t.category === 'Donations' && t.amount < 0).reduce((s,t) => s + Math.abs(t.amount), 0);
+        const healthcareTotal = transactions.filter(t => t.category === 'Healthcare' && t.amount < 0).reduce((s,t) => s + Math.abs(t.amount), 0);
+        const educationTotal = transactions.filter(t => t.category === 'Education' && t.amount < 0).reduce((s,t) => s + Math.abs(t.amount), 0);
+
+        const rrspRoom = grossAnnual > 0 ? Math.min(Math.round(grossAnnual * 0.18), 31560) : null;
+        const rrspTaxSaving = rrspRoom && taxCalc ? Math.round(rrspRoom * (taxCalc.effectiveRate / 100)) : null;
+        const rrsp500Saving = taxCalc ? Math.round(500 * 12 * (taxCalc.effectiveRate / 100)) : null;
+
+        const profileSet = grossAnnual > 0;
+
+        return (
+            <div className="space-y-6 animate-fade-in">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Tax & Income</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">Canadian tax estimates for {new Date().getFullYear()}. Not financial advice.</p>
+                    </div>
+                    <button onClick={() => setShowIncomeModal(true)}
+                        className="btn-primary px-4 py-2 text-white text-sm flex items-center gap-2">
+                        <Receipt size={14} /> {profileSet ? 'Edit Income Profile' : 'Set Up Income Profile'}
+                    </button>
+                </div>
+
+                {/* Section A: Income Snapshot */}
+                <div className="glass-card p-6">
+                    <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2"><DollarSign size={14} className="text-emerald-400" /> Income Snapshot</h3>
+                    {profileSet && taxCalc ? (
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                {[
+                                    { label: 'Gross / Year', value: fmt(taxCalc.grossAnnual), color: 'text-white' },
+                                    { label: 'Total Tax', value: fmt(taxCalc.totalTax), color: 'text-rose-400' },
+                                    { label: 'Net Take-Home / Year', value: fmt(netTakeHomeAnnual), color: 'text-emerald-400' },
+                                    { label: 'Effective Rate', value: taxCalc.effectiveRate + '%', color: 'text-amber-400' },
+                                ].map(s => (
+                                    <div key={s.label} className="p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{s.label}</p>
+                                        <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs text-slate-400">
+                                <div className="p-3 bg-white/[0.02] rounded-xl">
+                                    <p className="text-slate-500 mb-1">Federal Tax</p>
+                                    <p className="font-mono text-slate-200">{fmt(taxCalc.federal)}</p>
+                                </div>
+                                <div className="p-3 bg-white/[0.02] rounded-xl">
+                                    <p className="text-slate-500 mb-1">Provincial Tax ({incomeProfile.province})</p>
+                                    <p className="font-mono text-slate-200">{fmt(taxCalc.provincial)}</p>
+                                </div>
+                                <div className="p-3 bg-white/[0.02] rounded-xl">
+                                    <p className="text-slate-500 mb-1">CPP + EI</p>
+                                    <p className="font-mono text-slate-200">{fmt(taxCalc.cpp + taxCalc.ei)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-8 space-y-3">
+                            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center mx-auto">
+                                <Receipt size={20} className="text-emerald-400" />
+                            </div>
+                            <p className="text-slate-400 text-sm">Set up your income profile to see tax breakdown, take-home pay, and RRSP/TFSA recommendations.</p>
+                            <button onClick={() => setShowIncomeModal(true)} className="btn-primary px-5 py-2 text-white text-sm">Set Up Income Profile</button>
+                        </div>
+                    )}
+
+                    {/* Income Comparison */}
+                    {detectedMonthlyIncome > 0 && (
+                        <div className="mt-4 p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                            <p className="text-xs text-slate-400 mb-2">Income Comparison</p>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Expected monthly take-home</span>
+                                <span className="font-mono text-emerald-400">{profileSet ? fmt(netTakeHomeMonthly) : 'Not set'}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm mt-1">
+                                <span className="text-slate-400">Detected from transactions</span>
+                                <span className="font-mono text-sky-400">{fmt(detectedMonthlyIncome)}</span>
+                            </div>
+                            {profileSet && Math.abs(netTakeHomeMonthly - detectedMonthlyIncome) > netTakeHomeMonthly * 0.25 && (
+                                <p className="text-xs text-amber-400 mt-2 flex items-center gap-1"><AlertTriangle size={11} /> Large gap detected — consider updating your income profile or checking for missing income transactions.</p>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Paycheque Breakdown */}
+                {profileSet && taxCalc && (
+                    <div className="glass-card p-5" style={{ borderTop: '1px solid rgba(56,191,255,0.18)' }}>
+                        <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                            <span>💵</span> Per-Paycheque Breakdown
+                            <span className="ml-auto text-[10px] text-slate-500 font-normal">
+                                {incomeProfile.payFrequency === 'weekly' ? 'Weekly' : incomeProfile.payFrequency === 'biweekly' ? 'Bi-weekly' : incomeProfile.payFrequency === 'semimonthly' ? 'Semi-monthly' : 'Monthly'}
+                            </span>
+                        </h3>
+                        {(() => {
+                            const gross = taxCalc.grossAnnual / freqDivisor;
+                            const fed = taxCalc.federal / freqDivisor;
+                            const prov = taxCalc.provincial / freqDivisor;
+                            const cpp = taxCalc.cpp / freqDivisor;
+                            const ei = taxCalc.ei / freqDivisor;
+                            const rrsp = (parseFloat(incomeProfile.rrspMonthly) || 0) / (freqDivisor / 12);
+                            const pension = (parseFloat(incomeProfile.pensionMonthly) || 0) / (freqDivisor / 12);
+                            const benefits = (parseFloat(incomeProfile.benefitsMonthly) || 0) / (freqDivisor / 12);
+                            const other = (parseFloat(incomeProfile.otherMonthly) || 0) / (freqDivisor / 12);
+                            const net = gross - fed - prov - cpp - ei - rrsp - pension - benefits - other;
+                            const rows = [
+                                { label: 'Gross Pay', val: gross, color: 'text-white', isGross: true },
+                                { label: 'Federal Tax', val: -fed, color: 'text-rose-400' },
+                                { label: `Provincial (${incomeProfile.province})`, val: -prov, color: 'text-rose-400' },
+                                { label: 'CPP', val: -cpp, color: 'text-amber-400' },
+                                { label: 'EI', val: -ei, color: 'text-amber-400' },
+                                rrsp > 0 && { label: 'RRSP', val: -rrsp, color: 'text-sky-400' },
+                                pension > 0 && { label: 'Pension', val: -pension, color: 'text-sky-400' },
+                                benefits > 0 && { label: 'Benefits', val: -benefits, color: 'text-violet-400' },
+                                other > 0 && { label: 'Other Deductions', val: -other, color: 'text-slate-400' },
+                            ].filter(Boolean);
+                            const totalDeductions = fed + prov + cpp + ei + rrsp + pension + benefits + other;
+                            return (
+                                <div className="space-y-1.5">
+                                    {rows.map((row, i) => (
+                                        <div key={i} className="flex items-center justify-between text-sm">
+                                            <span className={`text-slate-400 ${row.isGross ? 'font-medium text-slate-200' : ''}`}>{row.label}</span>
+                                            <span className={`font-mono font-medium ${row.color}`}>{row.val >= 0 ? '' : '−'}{fmt(Math.abs(row.val))}</span>
+                                        </div>
+                                    ))}
+                                    <div className="border-t border-white/10 pt-2 mt-2 flex items-center justify-between">
+                                        <span className="text-sm font-semibold text-white">Take-Home Pay</span>
+                                        <span className="font-mono font-bold text-emerald-400 text-base">{fmt(net)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                        <span>Total deducted per cheque</span>
+                                        <span className="font-mono">{fmt(totalDeductions)} ({((totalDeductions / gross) * 100).toFixed(1)}% of gross)</span>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
+
+                {/* Section B: RRSP & TFSA */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="glass-card p-5">
+                        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">🏦 RRSP Calculator</h3>
+                        {rrspRoom ? (
+                            <div className="space-y-3">
+                                <div className="space-y-1.5 text-sm">
+                                    <div className="flex justify-between"><span className="text-slate-400">Est. contribution room</span><span className="font-mono text-white">{fmt(rrspRoom)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">Tax savings if fully used</span><span className="font-mono text-emerald-400">{fmt(rrspTaxSaving)}</span></div>
+                                </div>
+                                <div className="border-t border-white/8 pt-3">
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-2">How much do you want to contribute annually?</p>
+                                    <div className="relative mb-2">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                                        <input type="number" min="0" placeholder={Math.min(rrspRoom, 6000)}
+                                            value={rrspContribution}
+                                            onChange={e => setRrspContribution(e.target.value)}
+                                            className="w-full bg-surface-light border border-white/10 rounded-xl pl-7 pr-3 py-2 text-sm text-white placeholder:text-slate-500 font-mono focus:outline-none focus:border-emerald-500/50" />
+                                    </div>
+                                    {(() => {
+                                        const contrib = parseFloat(rrspContribution) || 0;
+                                        if (contrib <= 0) return <p className="text-[10px] text-slate-500">Enter an amount to see your estimated tax savings.</p>;
+                                        const capped = Math.min(contrib, rrspRoom);
+                                        const marginalRate = taxCalc ? (taxCalc.totalTax / taxCalc.grossAnnual) : 0.26;
+                                        const saving = Math.round(capped * marginalRate);
+                                        const monthly = Math.round(capped / 12);
+                                        const overRoom = contrib > rrspRoom;
+                                        return (
+                                            <div className="space-y-1.5 text-sm">
+                                                {overRoom && <p className="text-[10px] text-amber-400">⚠ Capped at contribution room of {fmt(rrspRoom)}</p>}
+                                                <div className="flex justify-between"><span className="text-slate-400">Monthly contribution</span><span className="font-mono text-white">{fmt(monthly)}/mo</span></div>
+                                                <div className="flex justify-between"><span className="text-slate-400">Est. tax refund</span><span className="font-mono text-emerald-400 font-bold">{fmt(saving)}</span></div>
+                                                <div className="flex justify-between"><span className="text-slate-400">Net cost after refund</span><span className="font-mono text-sky-400">{fmt(capped - saving)}</span></div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                                <p className="text-[10px] text-slate-500">18% of gross income, max $31,560 (2024). Check CRA My Account for exact room.</p>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-slate-500">Set up your income profile to see RRSP estimates.</p>
+                        )}
+                    </div>
+                    <div className="glass-card p-5">
+                        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">💰 TFSA</h3>
+                        <div className="space-y-2 text-sm">
+                            <div className="flex justify-between"><span className="text-slate-400">2024 annual limit</span><span className="font-mono text-white">{fmt(7000)}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-400">Monthly contribution</span><span className="font-mono text-slate-300">{fmt(7000/12)}</span></div>
+                            <p className="text-[10px] text-slate-500 pt-1">Growth and withdrawals are tax-free. Ideal for emergency fund (keep in HISA/cash TFSA) or long-term investing.</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Section B2: Freelancer / Hourly Quarterly Tax Estimator */}
+                {(incomeProfile.type === 'freelance' || incomeProfile.type === 'hourly') && profileSet && taxCalc && (
+                    <div className="glass-card p-5">
+                        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">🗓️ Quarterly Tax Installments</h3>
+                        <p className="text-xs text-slate-500 mb-4">As a {incomeProfile.type === 'freelance' ? 'freelancer' : 'hourly worker'} without employer withholdings, CRA may require quarterly installments. Here are your estimated amounts:</p>
+                        {(() => {
+                            const annualTax = taxCalc.totalTax;
+                            const quarterly = Math.ceil(annualTax / 4);
+                            const monthly = Math.ceil(annualTax / 12);
+                            const dates = ['Mar 15', 'Jun 15', 'Sep 15', 'Dec 15'];
+                            const today = new Date();
+                            return (
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-3 gap-3 mb-3">
+                                        {[
+                                            { label: 'Annual Tax', val: annualTax, color: 'text-rose-400' },
+                                            { label: 'Per Quarter', val: quarterly, color: 'text-amber-400' },
+                                            { label: 'Per Month (set aside)', val: monthly, color: 'text-sky-400' },
+                                        ].map(s => (
+                                            <div key={s.label} className="p-3 bg-white/[0.03] rounded-xl border border-white/5 text-center">
+                                                <p className="text-[10px] text-slate-500 mb-1">{s.label}</p>
+                                                <p className={`font-mono text-base font-bold ${s.color}`}>{fmt(s.val)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {dates.map((date, i) => {
+                                            const dueYear = today.getMonth() >= 2 && i === 0 ? today.getFullYear() + 1 : today.getFullYear();
+                                            const isPast = new Date(`${dueYear} ${date}`) < today;
+                                            return (
+                                                <div key={date} className={`p-3 rounded-xl border text-center ${isPast ? 'bg-white/[0.02] border-white/5 opacity-50' : 'bg-amber-500/8 border-amber-500/20'}`}>
+                                                    <p className="text-[10px] text-slate-400 mb-1">{date}</p>
+                                                    <p className={`font-mono text-sm font-semibold ${isPast ? 'text-slate-500' : 'text-amber-300'}`}>{fmt(quarterly)}</p>
+                                                    {isPast && <p className="text-[9px] text-slate-600">past</p>}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="p-3 bg-sky-500/8 border border-sky-500/20 rounded-xl">
+                                        <p className="text-xs text-sky-300">💡 Set aside {fmt(monthly)}/mo in a separate account. If total tax owing is under $3,000, you may not need installments — confirm with CRA.</p>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
+
+                {/* Section C: Tax-Deductible Expenses */}
+                {(donationTotal > 0 || healthcareTotal > 0 || educationTotal > 0) && (
+                    <div className="glass-card p-5">
+                        <h3 className="text-sm font-semibold text-white mb-4">Tax-Deductible Expenses Found in Transactions</h3>
+                        <div className="space-y-2">
+                            {donationTotal > 0 && (
+                                <div className="flex items-start gap-4 py-2 border-b border-white/5">
+                                    <span className="text-slate-400 text-xs w-28 shrink-0">Donations</span>
+                                    <span className="font-mono text-sm text-emerald-400 w-24 shrink-0">{fmt(donationTotal)}</span>
+                                    <span className="text-xs text-slate-500">Charitable donations → Estimated credit: ~{fmt(donationTotal * 0.15)}–{fmt(donationTotal * 0.29)} at 15–29% federal rate</span>
+                                </div>
+                            )}
+                            {healthcareTotal > 0 && (
+                                <div className="flex items-start gap-4 py-2 border-b border-white/5">
+                                    <span className="text-slate-400 text-xs w-28 shrink-0">Healthcare</span>
+                                    <span className="font-mono text-sm text-emerald-400 w-24 shrink-0">{fmt(healthcareTotal)}</span>
+                                    <span className="text-xs text-slate-500">Medical expenses → May qualify if exceeds 3% of net income ({taxCalc ? fmt(taxCalc.netAnnual * 0.03) : '$2,635 threshold'})</span>
+                                </div>
+                            )}
+                            {educationTotal > 0 && (
+                                <div className="flex items-start gap-4 py-2">
+                                    <span className="text-slate-400 text-xs w-28 shrink-0">Education</span>
+                                    <span className="font-mono text-sm text-emerald-400 w-24 shrink-0">{fmt(educationTotal)}</span>
+                                    <span className="text-xs text-slate-500">Education / professional development → May be partially deductible if work-related (T2200 required)</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Section D: Personalized Tax Tips */}
+                <div className="glass-card p-5">
+                    <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2"><Sparkles size={14} className="text-emerald-400" /> Personalized Tax Tips</h3>
+                    <div className="space-y-3">
+                        {[
+                            profileSet && taxCalc && rrspRoom && !(incomeProfile.rrspMonthly && parseFloat(incomeProfile.rrspMonthly) * 12 >= rrspRoom * 0.5)
+                                ? { icon: '🏦', tip: `Contributing to your RRSP could save you ~${fmt(rrsp500Saving || 0)}/year in taxes. RRSP contributions reduce your taxable income directly.` }
+                                : null,
+                            summary.monthlyNet < 100 || (savingsGoals || []).length === 0
+                                ? { icon: '💰', tip: 'Use your TFSA for emergency savings. Contributions are tax-free, withdrawals are penalty-free, and the $7,000/yr room accumulates if unused.' }
+                                : null,
+                            summary.monthlyNet < 0
+                                ? { icon: '💡', tip: 'If your income is below $49,166, you may qualify for the GST/HST credit — check eligibility on CRA My Account when you file.' }
+                                : null,
+                            grossAnnual > 80000
+                                ? { icon: '👫', tip: 'High income earner? A spousal RRSP lets you contribute to your spouse\'s RRSP, splitting income in retirement and reducing combined taxes.' }
+                                : null,
+                            donationTotal > 200
+                                ? { icon: '🎗️', tip: `You donated ${fmt(donationTotal)}. Combine donations with your spouse and carry forward smaller amounts — the credit rate jumps from 15% to 29% on amounts over $200.` }
+                                : null,
+                            { icon: '📅', tip: 'File by April 30 — late filing penalties start at 5% of the balance owing plus 1%/month, up to 12 months. Even if you can\'t pay, file on time.' },
+                        ].filter(Boolean).map((t, i) => (
+                            <div key={i} className="flex items-start gap-3 p-3 bg-white/[0.02] rounded-xl">
+                                <span className="text-lg shrink-0">{t.icon}</span>
+                                <p className="text-xs text-slate-300 leading-relaxed">{t.tip}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Section E: Tax Year Prep Checklist */}
+                <div className="glass-card p-5">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><CheckCircle size={14} className="text-emerald-400" /> Tax Year Prep Checklist</h3>
+                        {taxChecklist.size > 0 && (
+                            <span className="text-[10px] text-emerald-400 font-medium">{taxChecklist.size} of 7 ready</span>
+                        )}
+                    </div>
+                    <div className="space-y-1">
+                        {[
+                            { id: 'tc_t4',     label: 'T4 from employer', desc: 'Employment income & deductions' },
+                            { id: 'tc_t5',     label: 'T5 for investment income', desc: 'Interest, dividends from bank/broker' },
+                            { id: 'tc_rrsp',   label: 'RRSP contribution receipts', desc: 'From your bank or investment firm' },
+                            { id: 'tc_med',    label: 'Medical receipts > $2,635', desc: '3% of income threshold for 2024' },
+                            { id: 'tc_don',    label: 'Charitable donation receipts', desc: 'Official receipts from registered charities' },
+                            { id: 'tc_office', label: 'Home office expenses (T2200 from employer)', desc: 'If you worked from home' },
+                            { id: 'tc_move',   label: 'Moving expense receipts (if moved for work)', desc: 'Eligible if you moved 40+ km closer to work' },
+                        ].map(item => {
+                            const checked = taxChecklist.has(item.id);
+                            return (
+                                <label key={item.id} className={`flex items-start gap-3 py-2.5 px-3 rounded-xl cursor-pointer transition-all border ${checked ? 'bg-emerald-500/8 border-emerald-500/15' : 'border-transparent hover:bg-white/[0.03]'}`}>
+                                    <input type="checkbox" checked={checked}
+                                        onChange={() => setTaxChecklist(prev => {
+                                            const next = new Set(prev);
+                                            checked ? next.delete(item.id) : next.add(item.id);
+                                            return next;
+                                        })}
+                                        className="mt-0.5 shrink-0 w-4 h-4 rounded accent-emerald-500 cursor-pointer" />
+                                    <div>
+                                        <p className={`text-sm font-medium ${checked ? 'text-slate-400 line-through' : 'text-slate-200'}`}>{item.label}</p>
+                                        <p className="text-[10px] text-slate-500">{item.desc}</p>
+                                    </div>
+                                </label>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    /* ═══════════════════════════════════════
        MAIN LAYOUT
        ═══════════════════════════════════════ */
     if (!activeUser) {
@@ -5802,13 +8496,17 @@ ${financialContext}`;
                 </div>
 
                 <nav className="sidebar-nav">
-                    {TABS.map(tab => (
-                        <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                            className={`sidebar-item ${activeTab === tab.id ? 'active' : ''}`}>
-                            <tab.icon size={14} strokeWidth={activeTab === tab.id ? 2.2 : 1.7} />
-                            <span>{tab.label}</span>
-                        </button>
-                    ))}
+                    {TABS.map(tab => {
+                        const legacyMyRecovery = tab.id === 'myrecovery' && ['recovery','savings','doctor'].includes(activeTab);
+                        const isActive = activeTab === tab.id || legacyMyRecovery;
+                        return (
+                            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                                className={`sidebar-item ${isActive ? 'active' : ''}`}>
+                                <tab.icon size={14} strokeWidth={isActive ? 2.2 : 1.7} />
+                                <span>{tab.label}</span>
+                            </button>
+                        );
+                    })}
                 </nav>
 
                 <div className="sidebar-footer">
@@ -5857,8 +8555,32 @@ ${financialContext}`;
                 {/* Topbar */}
                 <header className="topbar">
                     <div className="topbar-page-title">
-                        {TABS.find(t => t.id === activeTab)?.label}
+                        {activeTab === 'myrecovery' || activeTab === 'recovery' || activeTab === 'savings' || activeTab === 'doctor'
+                            ? 'My Recovery'
+                            : TABS.find(t => t.id === activeTab)?.label}
                     </div>
+                    {/* Dashboard period filter — shown inline in topbar for quick access */}
+                    {activeTab === 'dashboard' && transactions.length > 0 && (
+                        <div className="flex items-center gap-1 p-1 rounded-xl mx-4" style={{ background: 'rgba(56,191,255,0.04)', border: '1px solid rgba(56,191,255,0.1)' }}>
+                            {[
+                                { key: 'all', label: 'All' },
+                                { key: 'last6', label: '6 Mo' },
+                                { key: 'last3', label: '3 Mo' },
+                                ...availableMonths.slice(-4).reverse().map(m => ({
+                                    key: m,
+                                    label: new Date(m + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+                                }))
+                            ].map(p => (
+                                <button key={p.key} onClick={() => setDashboardPeriod(p.key)}
+                                    className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold transition-all"
+                                    style={dashboardPeriod === p.key
+                                        ? { background: 'rgba(56,191,255,0.15)', color: '#38BFFF', boxShadow: '0 0 12px rgba(56,191,255,0.2)' }
+                                        : { color: 'var(--text-faint)' }}>
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     {transactions.length > 0 && (
                         <div className="topbar-right">
                             <span className="status-pill status-pill-income">
@@ -5880,13 +8602,18 @@ ${financialContext}`;
                 {/* Page content */}
                 <main className="page-content" key={activeTab}>
                     {activeTab === 'dashboard' && renderDashboard()}
-                    {activeTab === 'transactions' && renderTransactions()}
-                    {activeTab === 'debts' && renderDebts()}
-                    {activeTab === 'savings' && renderSavings()}
+                    {activeTab === 'myrecovery' && renderMyRecovery()}
+                    {activeTab === 'finances' && renderFinances()}
+                    {activeTab === 'ledger' && renderLedger()}
                     {activeTab === 'networth' && renderNetWorth()}
                     {activeTab === 'advisor' && renderAdvisor()}
-                    {activeTab === 'doctor' && renderDoctor()}
-                    {activeTab === 'recovery' && renderRecovery()}
+                    {activeTab === 'tax' && renderTax()}
+                    {/* legacy routes for bookmarked tabs */}
+                    {activeTab === 'transactions' && renderFinances()}
+                    {activeTab === 'debts' && renderFinances()}
+                    {activeTab === 'recovery' && renderMyRecovery()}
+                    {activeTab === 'savings' && renderMyRecovery()}
+                    {activeTab === 'doctor' && renderMyRecovery()}
                 </main>
             </div>
 
@@ -6025,6 +8752,18 @@ ${financialContext}`;
             })()}
 
             {/* ── CSV Trust Modal ── */}
+            {/* ── DEBT PAID OFF CELEBRATION ── */}
+            {debtCelebration && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none">
+                    <div className="glass-card p-10 text-center animate-scale-spring border border-emerald-500/40" style={{ boxShadow: '0 0 60px rgba(16,240,160,0.25)' }}>
+                        <div className="text-6xl mb-4">🎉</div>
+                        <h2 className="text-2xl font-bold text-white mb-1">Debt Eliminated!</h2>
+                        <p className="text-emerald-400 font-semibold text-lg">{debtCelebration.name}</p>
+                        <p className="text-slate-400 text-sm mt-1">{fmt(debtCelebration.amount)} paid off — that's real progress.</p>
+                    </div>
+                </div>
+            )}
+
             {pendingUpload && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
                     <div className="glass-card p-7 max-w-md w-full mx-4 space-y-5">
@@ -6173,6 +8912,291 @@ ${financialContext}`;
                                     e.target.value = '';
                                 }} />
                             </label>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── File Type Modal ── */}
+            {fileTypeModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                    <div className="glass-card p-7 max-w-sm w-full mx-4 space-y-4">
+                        <h3 className="text-base font-semibold text-white">What type of document is this?</h3>
+                        <p className="text-xs text-slate-400">We couldn't auto-detect the type of <span className="text-white font-medium">{fileTypeModal.filename}</span>. Select what it is:</p>
+                        <div className="space-y-2">
+                            {[
+                                { type: 'bank_statement', label: 'Bank Statement (Chequing / Savings)', icon: '🏦' },
+                                { type: 'credit_card', label: 'Credit Card Statement', icon: '💳' },
+                                { type: 'loan', label: 'Loan / Mortgage Statement', icon: '🏠' },
+                                { type: 'paystub', label: 'Pay Stub / Pay Slip', icon: '💼' },
+                            ].map(opt => (
+                                <button key={opt.type} onClick={() => { fileTypeModal.resolve(opt.type); setFileTypeModal(null); }}
+                                    className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.07] hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all text-left">
+                                    <span className="text-lg">{opt.icon}</span>
+                                    <span className="text-sm text-slate-200">{opt.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                        <button onClick={() => { setFileTypeModal(null); }} className="w-full text-xs text-slate-500 hover:text-slate-400 py-2">Cancel</button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Income Profile Modal ── */}
+            {showIncomeModal && (() => {
+                // Compute live preview inline
+                let previewGross = 0;
+                if (incomeProfile.type === 'salary') {
+                    previewGross = parseFloat(incomeProfile.grossAmount) || 0;
+                } else if (incomeProfile.type === 'hourly') {
+                    const r = parseFloat(incomeProfile.grossAmount) || 0;
+                    const h = parseFloat(incomeHoursPerWeek) || 40;
+                    previewGross = r * h * 52;
+                } else if (incomeProfile.type === 'freelance') {
+                    const b = parseFloat(incomeProfile.grossAmount) || 0;
+                    const freq = incomeProfile.payFrequency;
+                    const mult = freq === 'weekly' ? 52 : freq === 'biweekly' ? 26 : freq === 'semimonthly' ? 24 : 12;
+                    previewGross = b * mult;
+                }
+                const previewTax = previewGross > 0 ? calculateCanadianTax(previewGross, incomeProfile.province) : null;
+                const previewDeductionsMo = (parseFloat(incomeProfile.rrspMonthly)||0)+(parseFloat(incomeProfile.pensionMonthly)||0)+(parseFloat(incomeProfile.benefitsMonthly)||0)+(parseFloat(incomeProfile.otherMonthly)||0);
+                const previewNetAnnual = previewTax ? previewTax.netAnnual - previewDeductionsMo * 12 : 0;
+                const previewNetMo = previewNetAnnual / 12;
+                const previewFreqDiv = incomeProfile.payFrequency === 'weekly' ? 52 : incomeProfile.payFrequency === 'biweekly' ? 26 : incomeProfile.payFrequency === 'semimonthly' ? 24 : 12;
+                const previewPerPaycheque = previewNetAnnual / previewFreqDiv;
+                return (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-8" onClick={() => setShowIncomeModal(false)}>
+                        <div className="glass-card p-7 max-w-lg w-full mx-4 space-y-5" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-base font-semibold text-white">Income Profile</h3>
+                                <button onClick={() => setShowIncomeModal(false)} className="text-slate-500 hover:text-white"><X size={16} /></button>
+                            </div>
+
+                            {/* Pay type */}
+                            <div>
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-2 block">Pay Type</label>
+                                <div className="flex gap-2">
+                                    {[{v:'salary',l:'Salary'},{v:'hourly',l:'Hourly'},{v:'freelance',l:'Freelance'}].map(opt => (
+                                        <button key={opt.v} onClick={() => setIncomeProfile(p => ({...p, type: opt.v}))}
+                                            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all border ${incomeProfile.type === opt.v ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/[0.03] border-white/10 text-slate-400 hover:text-white'}`}>
+                                            {opt.l}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Amount */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">
+                                        {incomeProfile.type === 'salary' ? 'Annual Salary ($)' : incomeProfile.type === 'hourly' ? 'Hourly Rate ($)' : 'Amount per Period ($)'}
+                                    </label>
+                                    <input type="number" value={incomeProfile.grossAmount} onChange={e => setIncomeProfile(p => ({...p, grossAmount: e.target.value}))}
+                                        placeholder={incomeProfile.type === 'salary' ? '75000' : '25.00'}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono" />
+                                </div>
+                                {incomeProfile.type === 'hourly' && (
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Hours / Week</label>
+                                        <input type="number" min="1" max="80" value={incomeHoursPerWeek} onChange={e => setIncomeHoursPerWeek(e.target.value)}
+                                            placeholder="40"
+                                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono" />
+                                        <p className="text-[10px] text-slate-500 mt-1">1–80 hrs/week</p>
+                                    </div>
+                                )}
+                                {incomeProfile.type !== 'hourly' && (
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Pay Frequency</label>
+                                        <select value={incomeProfile.payFrequency} onChange={e => setIncomeProfile(p => ({...p, payFrequency: e.target.value}))}
+                                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+                                            <option value="weekly" className="bg-[#0c0e18]">Weekly</option>
+                                            <option value="biweekly" className="bg-[#0c0e18]">Bi-weekly</option>
+                                            <option value="semimonthly" className="bg-[#0c0e18]">Semi-monthly</option>
+                                            <option value="monthly" className="bg-[#0c0e18]">Monthly</option>
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Province */}
+                            <div>
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Province</label>
+                                <select value={incomeProfile.province} onChange={e => setIncomeProfile(p => ({...p, province: e.target.value}))}
+                                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+                                    {['ON','BC','AB','QC','MB','SK'].map(pv => <option key={pv} value={pv} className="bg-[#0c0e18]">{pv}</option>)}
+                                    <option value="Other" className="bg-[#0c0e18]">Other (uses ON rates)</option>
+                                </select>
+                            </div>
+
+                            {/* Deductions */}
+                            <div>
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-2 block">Monthly Deductions (after-tax)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {[
+                                        {key:'rrspMonthly', label:'RRSP /mo'},
+                                        {key:'pensionMonthly', label:'Pension /mo'},
+                                        {key:'benefitsMonthly', label:'Benefits /mo'},
+                                        {key:'otherMonthly', label:'Other /mo'},
+                                    ].map(d => (
+                                        <div key={d.key}>
+                                            <label className="text-[10px] text-slate-500 mb-1 block">{d.label}</label>
+                                            <input type="number" value={incomeProfile[d.key]} onChange={e => setIncomeProfile(p => ({...p, [d.key]: e.target.value}))}
+                                                placeholder="0"
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono" />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Live preview */}
+                            {previewTax && (
+                                <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 space-y-2 text-xs">
+                                    <p className="text-emerald-400 font-semibold mb-2">Live Preview</p>
+                                    <div className="flex justify-between"><span className="text-slate-400">Gross / year</span><span className="font-mono text-white">{fmt(previewTax.grossAnnual)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">Federal tax</span><span className="font-mono text-rose-400">-{fmt(previewTax.federal)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">Provincial tax ({incomeProfile.province})</span><span className="font-mono text-rose-400">-{fmt(previewTax.provincial)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">CPP</span><span className="font-mono text-rose-400">-{fmt(previewTax.cpp)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">EI</span><span className="font-mono text-rose-400">-{fmt(previewTax.ei)}</span></div>
+                                    {previewDeductionsMo > 0 && <div className="flex justify-between"><span className="text-slate-400">Your deductions / year</span><span className="font-mono text-rose-400">-{fmt(previewDeductionsMo * 12)}</span></div>}
+                                    <div className="border-t border-white/10 pt-2 flex justify-between font-semibold"><span className="text-white">Net take-home / year</span><span className="font-mono text-emerald-400">{fmt(previewNetAnnual)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">/ month</span><span className="font-mono text-emerald-300">{fmt(previewNetMo)}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-400">/ paycheque</span><span className="font-mono text-emerald-300">{fmt(previewPerPaycheque)}</span></div>
+                                </div>
+                            )}
+
+                            <div className="flex gap-3">
+                                <button onClick={() => setShowIncomeModal(false)}
+                                    className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 rounded-xl text-white text-sm font-medium transition-all">
+                                    Save &amp; Close
+                                </button>
+                                <button onClick={() => setShowIncomeModal(false)}
+                                    className="px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 text-sm transition-all">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ── Image Account Import Modal ── */}
+            {imageAccountModal && (() => {
+                const debtTypes = ['mortgage','student_loan','vehicle','loc','debt'];
+                const isDebt = debtTypes.includes(imageAccountForm.type);
+                const typeLabels = { mortgage:'Mortgage', student_loan:'Student Loan', vehicle:'Vehicle Loan', loc:'Line of Credit', debt:'Other Debt', savings:'Savings Account', chequing:'Chequing Account', unknown:'Select type…' };
+                const confirm = () => {
+                    const bal = parseFloat(imageAccountForm.balance) || 0;
+                    const rate = parseFloat(imageAccountForm.interestRate) || 0;
+                    const pmt = parseFloat(imageAccountForm.monthlyPayment) || 0;
+                    if (isDebt) {
+                        const catMap = { mortgage:'mortgage', student_loan:'student_loan', vehicle:'car_loan', loc:'line_of_credit', debt:'other' };
+                        setDebts(prev => [...prev, {
+                            id: `debt-img-${Date.now()}`,
+                            name: imageAccountForm.name || 'Imported Debt',
+                            amount: String(bal),
+                            interestRate: String(rate),
+                            monthlyPayment: String(pmt),
+                            minimumPayment: String(pmt),
+                            type: 'debt',
+                            debtCategory: catMap[imageAccountForm.type] || 'other',
+                            priority: 'medium',
+                            lender: '',
+                            notes: `Imported from image: ${imageAccountModal.filename}`,
+                            monthsRemaining: '',
+                        }]);
+                    } else {
+                        const accId = `acc-img-${Date.now()}`;
+                        setAccounts(prev => [...prev, { id: accId, fileName: imageAccountModal.filename, accountName: imageAccountForm.name || 'Imported Account', accountType: imageAccountForm.type === 'savings' ? 'savings' : 'chequing' }]);
+                        if (bal) setAccountBalances(prev => ({ ...prev, [accId]: bal }));
+                    }
+                    imageAccountModal.resolve();
+                    setImageAccountModal(null);
+                };
+                return (
+                    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-md">
+                        <div className="glass-card glass-card-premium max-w-md w-full mx-4 p-6 space-y-4 animate-scale-spring max-h-[90vh] overflow-y-auto">
+                            <div className="flex items-start justify-between">
+                                <div>
+                                    <h2 className="text-lg font-bold text-white">Review Extracted Data</h2>
+                                    <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[280px]">{imageAccountModal.filename}</p>
+                                </div>
+                                <button onClick={() => { imageAccountModal.resolve(); setImageAccountModal(null); }} className="text-slate-500 hover:text-white p-1"><X size={18} /></button>
+                            </div>
+                            {/* OCR preview */}
+                            {imageAccountModal.lines?.length > 0 && (
+                                <div className="bg-black/30 rounded-lg p-3 text-[10px] font-mono text-slate-400 max-h-28 overflow-y-auto">
+                                    {imageAccountModal.lines.map((l, i) => <div key={i}>{l}</div>)}
+                                </div>
+                            )}
+                            <p className="text-xs text-slate-300">We extracted the data below. Review, correct, then confirm to add it to your app.</p>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Account / Debt Name</label>
+                                    <input value={imageAccountForm.name} onChange={e => setImageAccountForm(f => ({...f, name: e.target.value}))}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Type</label>
+                                    <select value={imageAccountForm.type} onChange={e => setImageAccountForm(f => ({...f, type: e.target.value}))}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none">
+                                        {Object.entries(typeLabels).map(([v, l]) => <option key={v} value={v} className="bg-[#0c0e18]">{l}</option>)}
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">{isDebt ? 'Balance Owed ($)' : 'Current Balance ($)'}</label>
+                                        <input type="number" value={imageAccountForm.balance} onChange={e => setImageAccountForm(f => ({...f, balance: e.target.value}))}
+                                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500/50" />
+                                    </div>
+                                    {isDebt && (
+                                        <div>
+                                            <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Interest Rate (%)</label>
+                                            <input type="number" step="0.01" value={imageAccountForm.interestRate} onChange={e => setImageAccountForm(f => ({...f, interestRate: e.target.value}))}
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500/50" />
+                                        </div>
+                                    )}
+                                    {isDebt && (
+                                        <div>
+                                            <label className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 block">Monthly Payment ($)</label>
+                                            <input type="number" value={imageAccountForm.monthlyPayment} onChange={e => setImageAccountForm(f => ({...f, monthlyPayment: e.target.value}))}
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-emerald-500/50" />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex gap-3 pt-1">
+                                <button onClick={confirm} className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 rounded-xl text-white text-sm font-semibold transition-all">
+                                    {isDebt ? 'Add to Debts' : 'Add Account'}
+                                </button>
+                                <button onClick={() => { imageAccountModal.resolve(); setImageAccountModal(null); }} className="px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 text-sm transition-all">Skip</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ── Same Card Merge Prompt ── */}
+            {sameCardPrompt && (
+                <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-md">
+                    <div className="glass-card glass-card-premium max-w-sm w-full mx-4 p-6 space-y-4 animate-scale-spring">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                                <CreditCard size={18} className="text-amber-400" />
+                            </div>
+                            <div>
+                                <h2 className="text-base font-bold text-white">Same Credit Card?</h2>
+                                <p className="text-xs text-slate-400 mt-0.5">We found multiple files that look like the same card</p>
+                            </div>
+                        </div>
+                        {sameCardPrompt.groups.map((group, gi) => (
+                            <div key={gi} className="bg-white/5 rounded-lg p-3 space-y-1">
+                                {group.map(acc => <p key={acc.id} className="text-xs text-slate-300 truncate">· {acc.accountName}</p>)}
+                            </div>
+                        ))}
+                        <p className="text-xs text-slate-400">Merging will combine all transactions under one account and use the most recent balance. Keeping separate creates individual account cards.</p>
+                        <div className="flex gap-3">
+                            <button onClick={() => sameCardPrompt.resolve(true)} className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 rounded-xl text-white text-sm font-semibold transition-all">Yes, Merge</button>
+                            <button onClick={() => sameCardPrompt.resolve(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-slate-300 text-sm transition-all">Keep Separate</button>
                         </div>
                     </div>
                 </div>

@@ -199,7 +199,20 @@ async function extractPDFText(file) {
         for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
             const page = await pdf.getPage(i);
             const content = await page.getTextContent();
-            text += content.items.map(item => item.str).join(' ') + '\n';
+            // Group text items by their vertical (Y) position so table rows stay together.
+            // Without this, a paystub table becomes one giant blob of labels followed by amounts.
+            const lineMap = {};
+            content.items.forEach(item => {
+                const y = Math.round(item.transform[5]); // vertical coordinate
+                if (!lineMap[y]) lineMap[y] = [];
+                lineMap[y].push({ x: item.transform[4], str: item.str });
+            });
+            // Sort rows top-to-bottom (PDF Y increases upward, so sort descending)
+            const sortedYs = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
+            sortedYs.forEach(y => {
+                const row = lineMap[y].sort((a, b) => a.x - b.x).map(it => it.str).join(' ').trim();
+                if (row) text += row + '\n';
+            });
         }
         return text;
     } catch(e) { return ''; }
@@ -222,34 +235,57 @@ async function extractImageText(file) {
    ═══════════════════════════════════════════ */
 function parsePaystubText(rawText) {
     const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const amountRe = /\$?\s*([\d,]+\.\d{2})/g;
+
+    const extractAmounts = (str) => {
+        const amounts = [];
+        let m;
+        const re = /\$?\s*([\d,]+\.\d{2})/g;
+        while ((m = re.exec(str)) !== null) {
+            const v = parseFloat(m[1].replace(/,/g, ''));
+            if (v > 0) amounts.push(v);
+        }
+        return amounts;
+    };
 
     const findByKeyword = (keywords) => {
         for (let i = 0; i < lines.length; i++) {
             const lineLower = lines[i].toLowerCase();
             if (keywords.some(kw => lineLower.includes(kw))) {
-                // collect all dollar amounts on this line and next 2
+                // Collect amounts from this line and the next 2
                 const combined = lines.slice(i, i + 3).join(' ');
-                const amounts = [];
-                let m;
-                const re = /\$?\s*([\d,]+\.\d{2})/g;
-                while ((m = re.exec(combined)) !== null) {
-                    amounts.push(parseFloat(m[1].replace(/,/g, '')));
-                }
+                const amounts = extractAmounts(combined);
                 if (amounts.length > 0) return { current: amounts[0], ytd: amounts[amounts.length - 1] };
             }
         }
         return { current: 0, ytd: 0 };
     };
 
-    const grossPay    = findByKeyword(['gross pay', 'gross earnings', 'total gross', 'regular earnings', 'base pay', 'gross wages', 'total earnings']);
-    const netPay      = findByKeyword(['net pay', 'net amount', 'take home', 'take-home', 'net wages', 'net deposit', 'direct deposit']);
-    const federalTax  = findByKeyword(['federal tax', 'federal income tax', 'fed tax', 'can fed', 'income tax federal', 'cit federal']);
-    const provTax     = findByKeyword(['provincial tax', 'provincial income tax', 'prov tax', 'on tax', 'bc tax', 'ab tax', 'qc tax', 'income tax provincial', 'prov income']);
-    const cpp         = findByKeyword(['cpp contribution', 'canada pension', 'cpp employee', 'cpp2', ' cpp ']);
-    const ei          = findByKeyword(['ei premium', 'employment insurance', 'e.i. premium', 'ei employee']);
-    const rrsp        = findByKeyword(['rrsp', 'rsp contribution', 'group rrsp']);
-    const benefits    = findByKeyword(['health benefit', 'dental', 'group benefit', 'medical premium', 'life insurance']);
-    const other       = findByKeyword(['union dues', 'parking deduction', 'garnishment']);
+    // Also try scanning adjacent lines for amounts when a keyword row has none
+    const findByKeywordFlex = (keywords) => {
+        const result = findByKeyword(keywords);
+        if (result.current > 0) return result;
+        // Check if keyword appears and amounts are on prev or next line
+        for (let i = 0; i < lines.length; i++) {
+            const lineLower = lines[i].toLowerCase();
+            if (keywords.some(kw => lineLower.includes(kw))) {
+                const window = lines.slice(Math.max(0, i - 1), i + 4).join(' ');
+                const amounts = extractAmounts(window);
+                if (amounts.length > 0) return { current: amounts[0], ytd: amounts[amounts.length - 1] };
+            }
+        }
+        return { current: 0, ytd: 0 };
+    };
+
+    const grossPay    = findByKeywordFlex(['gross pay', 'gross earnings', 'total gross', 'regular earnings', 'base pay', 'gross wages', 'total earnings', 'regular pay', 'gross salary', 'earnings gross', 'current gross']);
+    const netPay      = findByKeywordFlex(['net pay', 'net amount', 'take home', 'take-home', 'net wages', 'net deposit', 'direct deposit', 'amount deposited', 'net cheque', 'total net', 'your deposit']);
+    const federalTax  = findByKeywordFlex(['federal tax', 'federal income tax', 'fed tax', 'can fed', 'income tax federal', 'cit federal', 'fed income', 'tax federal', 'income tax - fed', 'income tax-fed']);
+    const provTax     = findByKeywordFlex(['provincial tax', 'provincial income tax', 'prov tax', 'on tax', 'bc tax', 'ab tax', 'qc tax', 'income tax provincial', 'prov income', 'income tax - prov', 'income tax-prov', 'tax ontario', 'tax alberta', 'tax bc']);
+    const cpp         = findByKeywordFlex(['cpp contribution', 'canada pension', 'cpp employee', 'cpp2', 'c.p.p.', ' cpp ', 'cpp-employee', 'cpp contributions']);
+    const ei          = findByKeywordFlex(['ei premium', 'employment insurance', 'e.i. premium', 'ei employee', 'e.i.', ' ei ', 'ei-employee', 'ei premiums']);
+    const rrsp        = findByKeywordFlex(['rrsp', 'rsp contribution', 'group rrsp', 'rrsp deduction', 'rsp deduction']);
+    const benefits    = findByKeywordFlex(['health benefit', 'dental', 'group benefit', 'medical premium', 'life insurance', 'extended health', 'benefit deduction']);
+    const other       = findByKeywordFlex(['union dues', 'parking deduction', 'garnishment', 'union due']);
 
     // Employer name — first short all-caps line in top 12 lines
     let employerName = '';
@@ -7889,7 +7925,19 @@ ${financialContext}`;
                                     ))}
                                 </div>
 
+                                {/* Parse failure warning */}
+                                {avgGross === 0 && avgNet === 0 && (
+                                    <div className="p-3 bg-amber-500/8 border border-amber-500/25 rounded-xl">
+                                        <p className="text-xs text-amber-300 font-semibold mb-1">⚠ Couldn't extract numbers from your paystub</p>
+                                        <p className="text-[11px] text-slate-400 leading-relaxed">This usually happens with scanned/image-only PDFs. Try these:
+                                            <br />1. Export a digital PDF directly from your employer's payroll portal (ADP, Payworks, Ceridian, Humi, etc.)
+                                            <br />2. Or take a clear photo/screenshot of the paystub and upload as JPG/PNG instead.
+                                        </p>
+                                    </div>
+                                )}
+
                                 {/* Extracted numbers — averaged */}
+                                {avgGross > 0 && (
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                     {[
                                         { label: 'Gross / Cheque', value: avgGross, color: 'text-white' },
@@ -7904,9 +7952,10 @@ ${financialContext}`;
                                         </div>
                                     ))}
                                 </div>
+                                )}
 
                                 {/* Deduction breakdown */}
-                                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5 space-y-1.5">
+                                {avgGross > 0 && <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5 space-y-1.5">
                                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Per-Cheque Deductions ({freqLabel})</p>
                                     {[
                                         { label: 'Federal Tax', val: avgFedTax, color: 'text-rose-400' },
@@ -7925,7 +7974,7 @@ ${financialContext}`;
                                         <span className="text-white">Take-Home</span>
                                         <span className="font-mono text-emerald-400">{fmt(avgNet)}</span>
                                     </div>
-                                </div>
+                                </div>}
 
                                 {/* YTD CPP / EI progress */}
                                 {(ytdCpp > 0 || ytdEi > 0) && (

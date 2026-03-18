@@ -199,21 +199,50 @@ async function extractPDFText(file) {
         for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
             const page = await pdf.getPage(i);
             const content = await page.getTextContent();
-            // Group text items by their vertical (Y) position so table rows stay together.
-            // Without this, a paystub table becomes one giant blob of labels followed by amounts.
+            // Group items by Y position using a 4pt tolerance bucket so that items on
+            // the same visual row (but with slightly different baselines) stay together.
             const lineMap = {};
             content.items.forEach(item => {
-                const y = Math.round(item.transform[5]); // vertical coordinate
+                const y = Math.round(item.transform[5] / 4) * 4;
                 if (!lineMap[y]) lineMap[y] = [];
                 lineMap[y].push({ x: item.transform[4], str: item.str });
             });
-            // Sort rows top-to-bottom (PDF Y increases upward, so sort descending)
             const sortedYs = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
             sortedYs.forEach(y => {
                 const row = lineMap[y].sort((a, b) => a.x - b.x).map(it => it.str).join(' ').trim();
                 if (row) text += row + '\n';
             });
         }
+        // ADP and some other payroll portals use XFA/image-layer PDFs where selectable
+        // text is absent or minimal. If we got very little text, fall back to rendering
+        // each page to canvas and running OCR on the image.
+        if (text.replace(/\s/g, '').length < 150) {
+            text = await extractPDFViaOCR(pdf);
+        }
+        return text;
+    } catch(e) { return ''; }
+}
+
+async function extractPDFViaOCR(pdf) {
+    try {
+        const { createWorker } = await import('tesseract.js');
+        const worker = await createWorker('eng');
+        let text = '';
+        for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
+            const page = await pdf.getPage(i);
+            // Render at 2× scale for better OCR accuracy
+            const viewport = page.getViewport({ scale: 2.0 });
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+            const url = URL.createObjectURL(blob);
+            const { data: { text: pageText } } = await worker.recognize(url);
+            URL.revokeObjectURL(url);
+            text += pageText + '\n';
+        }
+        await worker.terminate();
         return text;
     } catch(e) { return ''; }
 }
@@ -7872,7 +7901,7 @@ ${financialContext}`;
                             {paystubProcessing ? (
                                 <>
                                     <Loader2 size={20} className="text-sky-400 animate-spin" />
-                                    <span className="text-xs text-sky-400 font-medium">Scanning paystub…</span>
+                                    <span className="text-xs text-sky-400 font-medium">Scanning paystub… (may take 15–30s for OCR)</span>
                                 </>
                             ) : (
                                 <>

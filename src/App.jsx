@@ -3458,13 +3458,13 @@ ${financialContext}`;
                     })()}
 
                     {/* ── BUDGET ALERTS ── */}
-                    {budgetData.filter(b => b.pct >= 90).length > 0 && (
+                    {budgetProgress.filter(b => b.pct >= 90).length > 0 && (
                         <div className="flex flex-wrap gap-2 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
                             <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
                             <div className="flex-1 min-w-0">
                                 <p className="text-xs font-semibold text-amber-300 mb-1.5">Budget Alert</p>
                                 <div className="flex flex-wrap gap-2">
-                                    {budgetData.filter(b => b.pct >= 90).map(b => (
+                                    {budgetProgress.filter(b => b.pct >= 90).map(b => (
                                         <span key={b.cat} className={`text-[11px] px-2.5 py-1 rounded-full font-medium border ${b.pct > 100 ? 'bg-rose-500/15 border-rose-500/30 text-rose-300' : 'bg-amber-500/15 border-amber-500/30 text-amber-300'}`}>
                                             {b.cat} {b.pct > 100 ? `${fmt(b.spent - b.budget)} over` : `${b.pct}%`}
                                         </span>

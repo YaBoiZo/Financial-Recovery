@@ -3457,6 +3457,24 @@ ${financialContext}`;
                         );
                     })()}
 
+                    {/* ── BUDGET ALERTS ── */}
+                    {budgetData.filter(b => b.pct >= 90).length > 0 && (
+                        <div className="flex flex-wrap gap-2 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                            <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-amber-300 mb-1.5">Budget Alert</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {budgetData.filter(b => b.pct >= 90).map(b => (
+                                        <span key={b.cat} className={`text-[11px] px-2.5 py-1 rounded-full font-medium border ${b.pct > 100 ? 'bg-rose-500/15 border-rose-500/30 text-rose-300' : 'bg-amber-500/15 border-amber-500/30 text-amber-300'}`}>
+                                            {b.cat} {b.pct > 100 ? `${fmt(b.spent - b.budget)} over` : `${b.pct}%`}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                            <button onClick={() => setActiveTab('myrecovery')} className="text-[10px] text-amber-400 hover:text-amber-200 border border-amber-500/25 px-2.5 py-1 rounded-lg shrink-0 transition-colors self-center">View →</button>
+                        </div>
+                    )}
+
                     {/* ── 2. HEALTH SCORE + SAVINGS RATE ── */}
                     {(healthScore || summary.monthlyIncome > 0) && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -7240,6 +7258,108 @@ ${financialContext}`;
                             );
                         })()}
 
+                        {/* Cash Flow Calendar */}
+                        {transactions.length > 0 && (() => {
+                            const { year, month, daysInMonth, firstDay, days, billDays } = calendarData;
+                            const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                            const prevMonth = () => {
+                                const d = new Date(year, month - 2, 1);
+                                setCalendarMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                            };
+                            const nextMonth = () => {
+                                const d = new Date(year, month, 1);
+                                setCalendarMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+                            };
+                            return (
+                                <div className="glass-card p-5">
+                                    {/* Header */}
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-2">
+                                            <Calendar size={14} className="text-sky-400" />
+                                            <h3 className="text-sm font-semibold text-white">Cash Flow Calendar</h3>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 transition-all text-slate-400 hover:text-white"><ChevronLeft size={14} /></button>
+                                            <span className="text-xs font-semibold text-white min-w-[100px] text-center">
+                                                {new Date(year, month - 1, 1).toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}
+                                            </span>
+                                            <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 transition-all text-slate-400 hover:text-white"><ChevronRight size={14} /></button>
+                                        </div>
+                                    </div>
+                                    {/* Day name headers */}
+                                    <div className="grid grid-cols-7 gap-1 mb-1">
+                                        {dayNames.map(d => <div key={d} className="text-center text-[9px] text-slate-600 font-medium py-1">{d}</div>)}
+                                    </div>
+                                    {/* Day cells */}
+                                    <div className="grid grid-cols-7 gap-1">
+                                        {Array.from({ length: firstDay }, (_, i) => <div key={`blank-${i}`} />)}
+                                        {Array.from({ length: daysInMonth }, (_, i) => {
+                                            const day = i + 1;
+                                            const data = days[day];
+                                            const bills = billDays[day] || [];
+                                            const hasIncome = data?.income > 0;
+                                            const hasExpense = data?.expenses > 0;
+                                            const hasBill = bills.length > 0 && !data;
+                                            const isToday = new Date().getDate() === day && new Date().getMonth() + 1 === month && new Date().getFullYear() === year;
+                                            const isSelected = calendarDayPopover?.day === day;
+                                            return (
+                                                <button key={day}
+                                                    onClick={() => setCalendarDayPopover(isSelected ? null : { day, ...(data || {}), bills })}
+                                                    className={`relative rounded-lg p-1.5 text-left transition-all min-h-[44px] ${isSelected ? 'ring-1 ring-sky-400/60 bg-sky-500/10' : isToday ? 'ring-1 ring-emerald-400/30 bg-emerald-500/5' : 'hover:bg-white/5'}`}>
+                                                    <span className={`text-[10px] font-semibold leading-none ${isToday ? 'text-emerald-400' : 'text-slate-400'}`}>{day}</span>
+                                                    {(hasIncome || hasExpense || hasBill) && (
+                                                        <div className="flex gap-0.5 mt-1 flex-wrap">
+                                                            {hasIncome && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                                                            {hasExpense && <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />}
+                                                            {hasBill && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />}
+                                                        </div>
+                                                    )}
+                                                    {data && (
+                                                        <div className="mt-0.5">
+                                                            {hasIncome && <p className="text-[9px] font-mono text-emerald-400 leading-none">+{fmtShort(data.income)}</p>}
+                                                            {hasExpense && <p className="text-[9px] font-mono text-rose-400 leading-none">-{fmtShort(data.expenses)}</p>}
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    {/* Day popover */}
+                                    {calendarDayPopover && (
+                                        <div className="mt-3 p-3 bg-white/[0.03] border border-white/10 rounded-xl space-y-1.5">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <p className="text-xs font-semibold text-white">
+                                                    {new Date(year, month - 1, calendarDayPopover.day).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                                </p>
+                                                <button onClick={() => setCalendarDayPopover(null)} className="text-slate-500 hover:text-white"><X size={12} /></button>
+                                            </div>
+                                            {calendarDayPopover.bills?.length > 0 && calendarDayPopover.bills.map((b, i) => (
+                                                <div key={i} className="flex items-center justify-between text-[11px] text-amber-300">
+                                                    <span className="truncate flex items-center gap-1"><Repeat size={10} /> {b.merchant}</span>
+                                                    <span className="font-mono shrink-0 ml-2">{fmt(b.avgAmount)}</span>
+                                                </div>
+                                            ))}
+                                            {(calendarDayPopover.txns || []).slice(0, 8).map((t, i) => (
+                                                <div key={i} className="flex items-center justify-between text-[11px]">
+                                                    <span className={`truncate ${t.amount > 0 ? 'text-emerald-400' : 'text-slate-300'}`}>{t.description}</span>
+                                                    <span className={`font-mono shrink-0 ml-2 ${t.amount > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{t.amount > 0 ? '+' : ''}{fmt(t.amount)}</span>
+                                                </div>
+                                            ))}
+                                            {!calendarDayPopover.txns?.length && !calendarDayPopover.bills?.length && (
+                                                <p className="text-[11px] text-slate-500">No transactions this day.</p>
+                                            )}
+                                        </div>
+                                    )}
+                                    {/* Legend */}
+                                    <div className="flex items-center gap-4 mt-3 text-[10px] text-slate-500">
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> Income</span>
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400 inline-block" /> Expense</span>
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Upcoming bill</span>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
                         {/* Cash Flow Stress Test */}
                         {summary.monthlyIncome > 0 && (
                             <div className="glass-card p-5">
@@ -7967,6 +8087,38 @@ ${financialContext}`;
                                     <div className="flex items-center justify-between text-[11px] text-slate-500">
                                         <span>Total deducted per cheque</span>
                                         <span className="font-mono">{fmt(totalDeductions)} ({((totalDeductions / gross) * 100).toFixed(1)}% of gross)</span>
+                                    </div>
+                                    {/* Gross → Net waterfall bar */}
+                                    <div className="mt-4">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Gross → Take-Home Breakdown</p>
+                                        <div className="flex h-6 rounded-lg overflow-hidden gap-px">
+                                            {[
+                                                { label: 'Tax', val: fed + prov, color: '#ef4444' },
+                                                { label: 'CPP+EI', val: cpp + ei, color: '#f59e0b' },
+                                                { label: 'Deductions', val: rrsp + pension + benefits + other, color: '#8b5cf6' },
+                                                { label: 'Take-Home', val: net, color: '#0ecb81' },
+                                            ].filter(s => s.val > 0).map((s, i) => (
+                                                <div key={i} title={`${s.label}: ${fmt(s.val)}`}
+                                                    className="relative group transition-all hover:brightness-110"
+                                                    style={{ width: `${(s.val / gross) * 100}%`, background: s.color, minWidth: 2 }}>
+                                                    <span className="hidden group-hover:flex absolute inset-0 items-center justify-center text-[9px] font-bold text-white/90 pointer-events-none">{s.label}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-2">
+                                            {[
+                                                { label: 'Tax', val: fed + prov, color: '#ef4444' },
+                                                { label: 'CPP + EI', val: cpp + ei, color: '#f59e0b' },
+                                                rrsp + pension + benefits + other > 0 && { label: 'Deductions', val: rrsp + pension + benefits + other, color: '#8b5cf6' },
+                                                { label: 'Take-Home', val: net, color: '#0ecb81' },
+                                            ].filter(Boolean).map((s, i) => (
+                                                <span key={i} className="text-[10px] flex items-center gap-1">
+                                                    <span className="w-2 h-2 rounded-sm inline-block shrink-0" style={{ background: s.color }} />
+                                                    <span className="text-slate-500">{s.label}</span>
+                                                    <span className="font-mono text-slate-400">{fmt(s.val)}</span>
+                                                </span>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                             );

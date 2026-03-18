@@ -14,7 +14,7 @@ import {
     Wallet, Home, Car, Zap, ShoppingBag, Utensils, Heart, Tv, Bus, Repeat,
     HelpCircle, X, GripVertical, Calendar, Loader2, Bot, User, Info,
     Shield, GraduationCap, Plane, HandHeart, Receipt, Search, ChevronLeft,
-    Filter, Hash, Stethoscope, Building2, Wrench, Banknote
+    Filter, Hash, Stethoscope, Building2, Wrench, Banknote, Sun, Moon
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════════
@@ -1436,6 +1436,11 @@ export default function App() {
     const [expandedNoteTxId, setExpandedNoteTxId] = useState(null);
     // Onboarding
     const [onboardingDone, setOnboardingDone] = useState(() => saved.current?.onboardingDone || false);
+    const [darkMode, setDarkMode] = useState(() => localStorage.getItem('fr-theme') !== 'light');
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+        localStorage.setItem('fr-theme', darkMode ? 'dark' : 'light');
+    }, [darkMode]);
     // Savings Goals
     const [savingsGoals, setSavingsGoals] = useState(() => saved.current?.savingsGoals || []);
     const [showGoalForm, setShowGoalForm] = useState(false);
@@ -8571,6 +8576,9 @@ ${financialContext}`;
                             <ArrowUpRight size={11} style={{ transform: 'rotate(180deg)' }} />
                         </button>
                     </div>
+                    <button onClick={() => setDarkMode(v => !v)} className="topnav-action" title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
+                        {darkMode ? <Sun size={13} /> : <Moon size={13} />}
+                    </button>
                     <button onClick={() => setShowProfilesModal(true)} className="topnav-action">
                         <User size={12} /><span>Sessions</span>
                     </button>

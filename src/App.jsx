@@ -194,7 +194,7 @@ async function extractPDFText(file) {
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
         const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, enableXfa: true }).promise;
         let text = '';
         for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
             const page = await pdf.getPage(i);
@@ -1473,6 +1473,8 @@ export default function App() {
     const [incomeHoursPerWeek, setIncomeHoursPerWeek] = useState(() => saved.current?.incomeHoursPerWeek || '');
     const [paystubs, setPaystubs] = useState(() => saved.current?.paystubs || []);
     const [paystubProcessing, setPaystubProcessing] = useState(false);
+    const [showManualPaystub, setShowManualPaystub] = useState(false);
+    const [manualPaystub, setManualPaystub] = useState({ grossPay: '', netPay: '', federalTax: '', provincialTax: '', cpp: '', ei: '', rrsp: '', payFrequency: 'biweekly' });
     // Weekly focus — did user mark this week's ONE THING as done?
     const [weeklyFocusDone, setWeeklyFocusDone] = useState(() => {
         try {
@@ -7882,15 +7884,18 @@ ${financialContext}`;
                                     for (const file of files) {
                                         try {
                                             let text = '';
+                                            let ocrUsed = false;
                                             if (file.type === 'application/pdf') {
                                                 text = await extractPDFText(file);
+                                                ocrUsed = text.replace(/\s/g, '').length < 150;
                                             } else {
                                                 text = await extractImageText(file);
+                                                ocrUsed = true;
                                             }
                                             const parsed = parsePaystubText(text);
-                                            results.push({ filename: file.name, ...parsed, rawLength: text.length });
+                                            results.push({ filename: file.name, ...parsed, rawLength: text.replace(/\s/g,'').length, rawPreview: text.slice(0, 600), ocrUsed });
                                         } catch(err) {
-                                            results.push({ filename: file.name, grossPay: 0, netPay: 0, error: true });
+                                            results.push({ filename: file.name, grossPay: 0, netPay: 0, error: String(err), rawLength: 0, rawPreview: '' });
                                         }
                                     }
                                     setPaystubs(prev => [...prev, ...results].slice(0, 3));
@@ -7943,25 +7948,96 @@ ${financialContext}`;
                                 {/* Individual stub files */}
                                 <div className="flex flex-wrap gap-2">
                                     {paystubs.map((p, i) => (
-                                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.04] rounded-lg border border-white/8 text-[11px]">
-                                            <FileText size={11} className="text-sky-400 shrink-0" />
+                                        <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] ${p.manual ? 'bg-sky-500/8 border-sky-500/25' : p.grossPay > 0 ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-white/[0.04] border-white/8'}`}>
+                                            <FileText size={11} className={p.manual ? 'text-sky-400' : p.grossPay > 0 ? 'text-emerald-400' : 'text-slate-500'} />
                                             <span className="text-slate-300 truncate max-w-[140px]">{p.filename}</span>
+                                            {p.manual && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400">manual</span>}
+                                            {p.grossPay > 0 && !p.manual && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">✓ parsed</span>}
                                             {p.employerName && <span className="text-slate-500 truncate max-w-[100px]">· {p.employerName}</span>}
                                             {p.payDate && <span className="text-slate-600">· {p.payDate}</span>}
+                                            {p.ocrUsed && !p.manual && p.grossPay > 0 && <span className="text-[9px] text-slate-600">OCR</span>}
                                             <button onClick={() => setPaystubs(prev => prev.filter((_, j) => j !== i))}
                                                 className="text-slate-600 hover:text-rose-400 ml-1 transition-colors"><X size={10} /></button>
                                         </div>
                                     ))}
                                 </div>
 
-                                {/* Parse failure warning */}
+                                {/* Parse failure — show debug + manual entry */}
                                 {avgGross === 0 && avgNet === 0 && (
-                                    <div className="p-3 bg-amber-500/8 border border-amber-500/25 rounded-xl">
-                                        <p className="text-xs text-amber-300 font-semibold mb-1">⚠ Couldn't extract numbers from your paystub</p>
-                                        <p className="text-[11px] text-slate-400 leading-relaxed">This usually happens with scanned/image-only PDFs. Try these:
-                                            <br />1. Export a digital PDF directly from your employer's payroll portal (ADP, Payworks, Ceridian, Humi, etc.)
-                                            <br />2. Or take a clear photo/screenshot of the paystub and upload as JPG/PNG instead.
-                                        </p>
+                                    <div className="space-y-3">
+                                        <div className="p-3 bg-amber-500/8 border border-amber-500/25 rounded-xl">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <p className="text-xs text-amber-300 font-semibold">⚠ Auto-extraction returned no data</p>
+                                                <button onClick={() => setShowManualPaystub(v => !v)}
+                                                    className="text-xs px-3 py-1 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-300 hover:text-white transition-colors">
+                                                    {showManualPaystub ? 'Hide' : '✏️ Enter manually'}
+                                                </button>
+                                            </div>
+                                            {paystubs.some(p => p.rawLength === 0) && (
+                                                <p className="text-[11px] text-slate-400 mb-2">Your PDFs appear to be image-scanned — no selectable text was found. OCR is running but may need a cleaner source.</p>
+                                            )}
+                                            {paystubs.some(p => p.rawPreview) && (
+                                                <details className="mt-1">
+                                                    <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-300">Show extracted text ({paystubs[0]?.rawLength || 0} chars)</summary>
+                                                    <pre className="text-[9px] text-slate-500 mt-1 overflow-auto max-h-32 whitespace-pre-wrap">{paystubs[0]?.rawPreview || '(empty)'}</pre>
+                                                </details>
+                                            )}
+                                        </div>
+                                        {/* Manual entry form */}
+                                        {showManualPaystub && (
+                                            <div className="p-4 bg-white/[0.03] border border-sky-500/20 rounded-xl space-y-3">
+                                                <p className="text-xs font-semibold text-sky-300">Enter values from your paystub</p>
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                                    {[
+                                                        { key: 'grossPay', label: 'Gross / Cheque' },
+                                                        { key: 'netPay', label: 'Net / Cheque' },
+                                                        { key: 'federalTax', label: 'Federal Tax' },
+                                                        { key: 'provincialTax', label: 'Provincial Tax' },
+                                                        { key: 'cpp', label: 'CPP' },
+                                                        { key: 'ei', label: 'EI Premium' },
+                                                        { key: 'rrsp', label: 'RRSP (optional)' },
+                                                    ].map(f => (
+                                                        <div key={f.key}>
+                                                            <p className="text-[10px] text-slate-500 mb-1">{f.label}</p>
+                                                            <input type="number" min="0" placeholder="0.00"
+                                                                value={manualPaystub[f.key] || ''}
+                                                                onChange={e => setManualPaystub(prev => ({ ...prev, [f.key]: e.target.value }))}
+                                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-sky-500/50" />
+                                                        </div>
+                                                    ))}
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-500 mb-1">Pay Frequency</p>
+                                                        <select value={manualPaystub.payFrequency}
+                                                            onChange={e => setManualPaystub(prev => ({ ...prev, payFrequency: e.target.value }))}
+                                                            className="w-full bg-surface border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300">
+                                                            <option value="weekly">Weekly</option>
+                                                            <option value="biweekly">Bi-weekly</option>
+                                                            <option value="semimonthly">Semi-monthly</option>
+                                                            <option value="monthly">Monthly</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => {
+                                                    const m = manualPaystub;
+                                                    const entry = {
+                                                        filename: 'Manual Entry',
+                                                        grossPay: parseFloat(m.grossPay) || 0,
+                                                        netPay: parseFloat(m.netPay) || 0,
+                                                        federalTax: parseFloat(m.federalTax) || 0,
+                                                        provincialTax: parseFloat(m.provincialTax) || 0,
+                                                        cpp: parseFloat(m.cpp) || 0,
+                                                        ei: parseFloat(m.ei) || 0,
+                                                        rrsp: parseFloat(m.rrsp) || 0,
+                                                        benefits: 0,
+                                                        payFrequency: m.payFrequency,
+                                                        rawLength: 0, rawPreview: '', manual: true,
+                                                    };
+                                                    setPaystubs(prev => prev.some(p => p.manual) ? prev.map(p => p.manual ? entry : p) : [...prev.filter(p => p.rawLength > 0 || p.grossPay > 0), entry].slice(0, 3));
+                                                    setShowManualPaystub(false);
+                                                    setManualPaystub({ grossPay: '', netPay: '', federalTax: '', provincialTax: '', cpp: '', ei: '', rrsp: '', payFrequency: 'biweekly' });
+                                                }} className="btn-primary text-white text-xs px-4 py-2">Save Manual Entry</button>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 

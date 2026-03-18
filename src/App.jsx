@@ -217,6 +217,87 @@ async function extractImageText(file) {
     } catch(e) { return ''; }
 }
 
+/* ═══════════════════════════════════════════
+   PAYSTUB TEXT PARSER
+   ═══════════════════════════════════════════ */
+function parsePaystubText(rawText) {
+    const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+    const findByKeyword = (keywords) => {
+        for (let i = 0; i < lines.length; i++) {
+            const lineLower = lines[i].toLowerCase();
+            if (keywords.some(kw => lineLower.includes(kw))) {
+                // collect all dollar amounts on this line and next 2
+                const combined = lines.slice(i, i + 3).join(' ');
+                const amounts = [];
+                let m;
+                const re = /\$?\s*([\d,]+\.\d{2})/g;
+                while ((m = re.exec(combined)) !== null) {
+                    amounts.push(parseFloat(m[1].replace(/,/g, '')));
+                }
+                if (amounts.length > 0) return { current: amounts[0], ytd: amounts[amounts.length - 1] };
+            }
+        }
+        return { current: 0, ytd: 0 };
+    };
+
+    const grossPay    = findByKeyword(['gross pay', 'gross earnings', 'total gross', 'regular earnings', 'base pay', 'gross wages', 'total earnings']);
+    const netPay      = findByKeyword(['net pay', 'net amount', 'take home', 'take-home', 'net wages', 'net deposit', 'direct deposit']);
+    const federalTax  = findByKeyword(['federal tax', 'federal income tax', 'fed tax', 'can fed', 'income tax federal', 'cit federal']);
+    const provTax     = findByKeyword(['provincial tax', 'provincial income tax', 'prov tax', 'on tax', 'bc tax', 'ab tax', 'qc tax', 'income tax provincial', 'prov income']);
+    const cpp         = findByKeyword(['cpp contribution', 'canada pension', 'cpp employee', 'cpp2', ' cpp ']);
+    const ei          = findByKeyword(['ei premium', 'employment insurance', 'e.i. premium', 'ei employee']);
+    const rrsp        = findByKeyword(['rrsp', 'rsp contribution', 'group rrsp']);
+    const benefits    = findByKeyword(['health benefit', 'dental', 'group benefit', 'medical premium', 'life insurance']);
+    const other       = findByKeyword(['union dues', 'parking deduction', 'garnishment']);
+
+    // Employer name — first short all-caps line in top 12 lines
+    let employerName = '';
+    for (let i = 0; i < Math.min(12, lines.length); i++) {
+        const l = lines[i];
+        if (l.length >= 3 && l.length <= 60 && l === l.toUpperCase() && /[A-Z]/.test(l) && !/^\d/.test(l) && !/PAY|STUB|PERIOD|DATE|SLIP/.test(l)) {
+            employerName = l; break;
+        }
+    }
+
+    // Pay date — first date-like string near "pay date" or "period end"
+    let payDate = '';
+    const dateRe = /(\d{4}[-\/]\d{2}[-\/]\d{2}|\d{2}[-\/]\d{2}[-\/]\d{4})/;
+    for (const l of lines.slice(0, 25)) {
+        if (/pay.?date|payment.?date|cheque.?date|period.?end|pay period/i.test(l)) {
+            const dm = l.match(dateRe); if (dm) { payDate = dm[0]; break; }
+        }
+    }
+    if (!payDate) { const dm = lines.slice(0, 10).join(' ').match(dateRe); if (dm) payDate = dm[0]; }
+
+    // Pay frequency
+    let payFrequency = 'biweekly';
+    const fullText = rawText.toLowerCase();
+    if (/semi.?monthly|twice.?month|2x.?month/.test(fullText)) payFrequency = 'semimonthly';
+    else if (/bi.?weekly|every.?two.?week|every.?2.?week/.test(fullText)) payFrequency = 'biweekly';
+    else if (/\bweekly\b/.test(fullText)) payFrequency = 'weekly';
+    else if (/\bmonthly\b/.test(fullText)) payFrequency = 'monthly';
+
+    return {
+        employerName,
+        payDate,
+        payFrequency,
+        grossPay:     grossPay.current,
+        netPay:       netPay.current,
+        federalTax:   federalTax.current,
+        provincialTax: provTax.current,
+        cpp:          cpp.current,
+        ei:           ei.current,
+        rrsp:         rrsp.current,
+        benefits:     benefits.current,
+        otherDeductions: other.current,
+        ytdGross:     grossPay.ytd,
+        ytdCpp:       cpp.ytd,
+        ytdEi:        ei.ytd,
+        ytdFedTax:    federalTax.ytd,
+    };
+}
+
 function extractFinancialDataFromImage(text) {
     const lower = text.toLowerCase();
     // Detect account / debt type
@@ -1325,6 +1406,8 @@ export default function App() {
     const [showIncomeModal, setShowIncomeModal] = useState(false);
     // Hourly rate hours/week (separate from incomeProfile to avoid mixing)
     const [incomeHoursPerWeek, setIncomeHoursPerWeek] = useState(() => saved.current?.incomeHoursPerWeek || '');
+    const [paystubs, setPaystubs] = useState(() => saved.current?.paystubs || []);
+    const [paystubProcessing, setPaystubProcessing] = useState(false);
     // Weekly focus — did user mark this week's ONE THING as done?
     const [weeklyFocusDone, setWeeklyFocusDone] = useState(() => {
         try {
@@ -1362,8 +1445,8 @@ export default function App() {
 
     // ── Persist to localStorage on change ──
     useEffect(() => {
-        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems], incomeProfile, incomeHoursPerWeek }, currentLsKey);
-    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems, incomeProfile, incomeHoursPerWeek, currentLsKey]);
+        saveToLS({ transactions, accounts, debts, startingBalance, chatMessages, advisorReportGenerated, isDemoMode, accountBalances, categoryBudgets, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems: [...dismissedAdvisorItems], incomeProfile, incomeHoursPerWeek, paystubs }, currentLsKey);
+    }, [transactions, debts, startingBalance, chatMessages, advisorReportGenerated, merchantOverrides, savingsGoals, nwAssets, txNotes, onboardingDone, dismissedAdvisorItems, incomeProfile, incomeHoursPerWeek, paystubs, currentLsKey]);
 
     // Persist tile order
     useEffect(() => {
@@ -7586,6 +7669,193 @@ ${financialContext}`;
                         className="btn-primary px-4 py-2 text-white text-sm flex items-center gap-2">
                         <Receipt size={14} /> {profileSet ? 'Edit Income Profile' : 'Set Up Income Profile'}
                     </button>
+                </div>
+
+                {/* ── PAYSTUB UPLOAD ── */}
+                <div className="glass-card p-5">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                <FileText size={14} className="text-sky-400" /> Paystub Scanner
+                            </h3>
+                            <p className="text-[10px] text-slate-500 mt-0.5">Upload up to 3 paystubs (PDF or image) — we extract your gross, net, CPP, EI, and tax deductions automatically</p>
+                        </div>
+                        {paystubs.length > 0 && (
+                            <button onClick={() => setPaystubs([])} className="text-[10px] text-slate-500 hover:text-rose-400 transition-colors">Clear all</button>
+                        )}
+                    </div>
+
+                    {/* Drop zone */}
+                    {paystubs.length < 3 && (
+                        <label className={`flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed cursor-pointer transition-all mb-4 ${paystubProcessing ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/10 hover:border-sky-500/40 hover:bg-sky-500/5'}`}>
+                            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple className="hidden"
+                                onChange={async (e) => {
+                                    const files = Array.from(e.target.files || []).slice(0, 3 - paystubs.length);
+                                    if (!files.length) return;
+                                    setPaystubProcessing(true);
+                                    const results = [];
+                                    for (const file of files) {
+                                        try {
+                                            let text = '';
+                                            if (file.type === 'application/pdf') {
+                                                text = await extractPDFText(file);
+                                            } else {
+                                                text = await extractImageText(file);
+                                            }
+                                            const parsed = parsePaystubText(text);
+                                            results.push({ filename: file.name, ...parsed, rawLength: text.length });
+                                        } catch(err) {
+                                            results.push({ filename: file.name, grossPay: 0, netPay: 0, error: true });
+                                        }
+                                    }
+                                    setPaystubs(prev => [...prev, ...results].slice(0, 3));
+                                    setPaystubProcessing(false);
+                                    e.target.value = '';
+                                }}
+                            />
+                            {paystubProcessing ? (
+                                <>
+                                    <Loader2 size={20} className="text-sky-400 animate-spin" />
+                                    <span className="text-xs text-sky-400 font-medium">Scanning paystub…</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Upload size={20} className="text-slate-500" />
+                                    <span className="text-xs text-slate-400">Drop paystubs here or click to browse</span>
+                                    <span className="text-[10px] text-slate-600">PDF, PNG, JPG · {3 - paystubs.length} slot{3 - paystubs.length !== 1 ? 's' : ''} remaining</span>
+                                </>
+                            )}
+                        </label>
+                    )}
+
+                    {/* Parsed paystub cards */}
+                    {paystubs.length > 0 && (() => {
+                        // Average numbers across all stubs for stability
+                        const avg = (key) => paystubs.reduce((s, p) => s + (Number(p[key]) || 0), 0) / paystubs.length;
+                        const avgGross    = avg('grossPay');
+                        const avgNet      = avg('netPay');
+                        const avgFedTax   = avg('federalTax');
+                        const avgProvTax  = avg('provincialTax');
+                        const avgCpp      = avg('cpp');
+                        const avgEi       = avg('ei');
+                        const avgRrsp     = avg('rrsp');
+                        const avgBenefits = avg('benefits');
+                        // Latest YTD from the most recent stub
+                        const latest = paystubs[paystubs.length - 1];
+                        const ytdCpp  = Number(latest.ytdCpp) || 0;
+                        const ytdEi   = Number(latest.ytdEi) || 0;
+                        // 2025 annual maxes
+                        const CPP_MAX = 3867.50;
+                        const EI_MAX  = 1049.12;
+                        // Detect pay frequency from stubs or fallback
+                        const detectedFreq = paystubs.find(p => p.payFrequency)?.payFrequency || 'biweekly';
+                        const freqLabel = detectedFreq === 'weekly' ? 'weekly' : detectedFreq === 'biweekly' ? 'bi-weekly' : detectedFreq === 'semimonthly' ? 'semi-monthly' : 'monthly';
+                        const freqDiv = detectedFreq === 'weekly' ? 52 : detectedFreq === 'biweekly' ? 26 : detectedFreq === 'semimonthly' ? 24 : 12;
+                        const annualGross = avgGross * freqDiv;
+
+                        return (
+                            <div className="space-y-4">
+                                {/* Individual stub files */}
+                                <div className="flex flex-wrap gap-2">
+                                    {paystubs.map((p, i) => (
+                                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.04] rounded-lg border border-white/8 text-[11px]">
+                                            <FileText size={11} className="text-sky-400 shrink-0" />
+                                            <span className="text-slate-300 truncate max-w-[140px]">{p.filename}</span>
+                                            {p.employerName && <span className="text-slate-500 truncate max-w-[100px]">· {p.employerName}</span>}
+                                            {p.payDate && <span className="text-slate-600">· {p.payDate}</span>}
+                                            <button onClick={() => setPaystubs(prev => prev.filter((_, j) => j !== i))}
+                                                className="text-slate-600 hover:text-rose-400 ml-1 transition-colors"><X size={10} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Extracted numbers — averaged */}
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                    {[
+                                        { label: 'Gross / Cheque', value: avgGross, color: 'text-white' },
+                                        { label: 'Net / Cheque', value: avgNet, color: 'text-emerald-400' },
+                                        { label: 'Est. Gross / Year', value: annualGross, color: 'text-sky-400' },
+                                        { label: 'Est. Net / Year', value: avgNet * freqDiv, color: 'text-emerald-300' },
+                                    ].map(s => (
+                                        <div key={s.label} className="p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                                            <p className="text-[10px] text-slate-500 mb-1">{s.label}</p>
+                                            <p className={`text-base font-bold font-mono ${s.color}`}>{fmt(s.value)}</p>
+                                            {paystubs.length > 1 && <p className="text-[9px] text-slate-600 mt-0.5">avg of {paystubs.length} stubs</p>}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Deduction breakdown */}
+                                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5 space-y-1.5">
+                                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Per-Cheque Deductions ({freqLabel})</p>
+                                    {[
+                                        { label: 'Federal Tax', val: avgFedTax, color: 'text-rose-400' },
+                                        { label: 'Provincial Tax', val: avgProvTax, color: 'text-rose-400' },
+                                        { label: 'CPP', val: avgCpp, color: 'text-amber-400' },
+                                        { label: 'EI Premium', val: avgEi, color: 'text-amber-400' },
+                                        avgRrsp > 0 && { label: 'RRSP', val: avgRrsp, color: 'text-sky-400' },
+                                        avgBenefits > 0 && { label: 'Benefits', val: avgBenefits, color: 'text-violet-400' },
+                                    ].filter(Boolean).map((row, i) => (
+                                        <div key={i} className="flex justify-between items-center text-xs">
+                                            <span className="text-slate-400">{row.label}</span>
+                                            <span className={`font-mono font-semibold ${row.color}`}>{row.val > 0 ? `−${fmt(row.val)}` : '—'}</span>
+                                        </div>
+                                    ))}
+                                    <div className="border-t border-white/8 pt-2 mt-1 flex justify-between text-xs font-semibold">
+                                        <span className="text-white">Take-Home</span>
+                                        <span className="font-mono text-emerald-400">{fmt(avgNet)}</span>
+                                    </div>
+                                </div>
+
+                                {/* YTD CPP / EI progress */}
+                                {(ytdCpp > 0 || ytdEi > 0) && (
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {[
+                                            { label: 'CPP Year-to-Date', ytd: ytdCpp, max: CPP_MAX, color: '#f59e0b' },
+                                            { label: 'EI Year-to-Date', ytd: ytdEi, max: EI_MAX, color: '#38BFFF' },
+                                        ].map(bar => {
+                                            const pct = Math.min(100, (bar.ytd / bar.max) * 100);
+                                            const remaining = Math.max(0, bar.max - bar.ytd);
+                                            return (
+                                                <div key={bar.label} className="p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                                                    <p className="text-[10px] text-slate-500 mb-2">{bar.label}</p>
+                                                    <div className="flex items-center justify-between text-xs mb-1.5">
+                                                        <span className="font-mono font-bold" style={{ color: bar.color }}>{fmt(bar.ytd)}</span>
+                                                        <span className="text-slate-600">/ {fmt(bar.max)}</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                                                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: bar.color }} />
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-600 mt-1">
+                                                        {pct >= 100 ? '✓ Max reached — take-home increases' : `${fmt(remaining)} until annual max`}
+                                                    </p>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* Apply to profile button */}
+                                <button
+                                    onClick={() => {
+                                        const freqDiv2 = detectedFreq === 'weekly' ? 52 : detectedFreq === 'biweekly' ? 26 : detectedFreq === 'semimonthly' ? 24 : 12;
+                                        setIncomeProfile(prev => ({
+                                            ...prev,
+                                            type: 'salary',
+                                            grossAmount: String(Math.round(avgGross * freqDiv2)),
+                                            payFrequency: detectedFreq,
+                                            rrspMonthly: avgRrsp > 0 ? String(Math.round(avgRrsp * freqDiv2 / 12)) : prev.rrspMonthly,
+                                            benefitsMonthly: avgBenefits > 0 ? String(Math.round(avgBenefits * freqDiv2 / 12)) : prev.benefitsMonthly,
+                                        }));
+                                    }}
+                                    className="w-full py-2.5 rounded-xl text-sm font-semibold text-black transition-all flex items-center justify-center gap-2"
+                                    style={{ background: 'linear-gradient(135deg, #10F0A0, #38BFFF)' }}>
+                                    <CheckCircle size={14} /> Apply to Income Profile
+                                </button>
+                                <p className="text-[10px] text-slate-600 text-center -mt-2">Updates your gross salary, pay frequency, and deductions in the profile</p>
+                            </div>
+                        );
+                    })()}
                 </div>
 
                 {/* Section A: Income Snapshot */}

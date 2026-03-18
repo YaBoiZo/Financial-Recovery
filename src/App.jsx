@@ -2658,8 +2658,9 @@ export default function App() {
         return { data, best: Math.max(...nets), worst: Math.min(...nets), avg: Math.round(nets.reduce((s, v) => s + v, 0) / nets.length) };
     }, [transactions, transferTxIds]);
 
-    // ── INCOME VS EXPENSE TREND (monthly, synced to dashboardTx period) ──
+    // ── INCOME VS EXPENSE TREND (daily when single month, monthly otherwise) ──
     const incomeExpenseTrend = useMemo(() => {
+        const isSingleMonth = /^\d{4}-\d{2}$/.test(dashboardPeriod);
         const map = {};
         dashboardTx.filter(t => {
             const cat = merchantOverrides[normalizeForOverride(t.description)] || categorize(t.description) || t.category;
@@ -2667,15 +2668,19 @@ export default function App() {
         }).forEach(t => {
             const d = new Date(t.date);
             if (isNaN(d)) return;
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            if (!map[key]) map[key] = { month: key, income: 0, expenses: 0 };
+            const key = isSingleMonth ? t.date : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (!map[key]) map[key] = { key, income: 0, expenses: 0 };
             if (t.amount > 0) map[key].income += t.amount;
             else map[key].expenses += Math.abs(t.amount);
         });
         return Object.values(map)
-            .sort((a, b) => a.month.localeCompare(b.month))
-            .map(m => ({ ...m, label: m.month.slice(5) + '/' + m.month.slice(2, 4), net: Math.round((m.income - m.expenses) * 100) / 100 }));
-    }, [dashboardTx, transferTxIds, merchantOverrides]);
+            .sort((a, b) => a.key.localeCompare(b.key))
+            .map(m => ({
+                ...m,
+                label: isSingleMonth ? m.key.slice(8) : m.key.slice(5) + '/' + m.key.slice(2, 4),
+                net: Math.round((m.income - m.expenses) * 100) / 100,
+            }));
+    }, [dashboardTx, dashboardPeriod, transferTxIds, merchantOverrides]);
 
     // ── FINANCIAL PRIORITY STACK ──
     const priorityStack = useMemo(() => {
